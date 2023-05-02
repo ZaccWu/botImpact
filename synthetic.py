@@ -28,6 +28,7 @@ def generate_network(z, bl):
             friend = np.random.binomial(1, p)
             if friend == 1:
                 edge_idx.append([i, j])
+                edge_idx.append([j, i])
     return np.array(edge_idx)
 
 
@@ -37,7 +38,6 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
     for i in range(len(edge_idx)):
         u, v = edge_idx[i][0], edge_idx[i][1]
         friend_dict.setdefault(u, []).append(v)
-        friend_dict.setdefault(v, []).append(u)
 
     y = np.zeros(N)
     Di, Bi = np.zeros(N), np.zeros(N)# 0-1 vector (sample_user + sample_bot)
