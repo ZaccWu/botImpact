@@ -18,7 +18,7 @@ if torch.cuda.is_available():
 
 
 class GCN(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels=2):
+    def __init__(self, in_channels, hidden_channels, out_channels=1):
         super(GCN, self).__init__()
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, out_channels)
@@ -27,7 +27,17 @@ class GCN(torch.nn.Module):
         x = F.relu(self.conv1(x, edge_index))
         x = F.dropout(x, p=0.5, training=self.training)
         x = self.conv2(x, edge_index)
-        return F.log_softmax(x, dim=1)
+        #return F.log_softmax(x, dim=1)
+        return x
+
+def anomaly_loss(target, pred_score, m=1):
+    # target: 0-1, pred_score: float
+    Rs = torch.mean(pred_score)
+    delta = torch.std(pred_score)
+    dev_score = (pred_score - Rs)/delta
+    cont_score = torch.max(torch.zeros(pred_score.shape), m-dev_score)
+    loss = dev_score[(1-target).nonzero()].sum()+cont_score[target.nonzero()].sum()
+    return loss
 
 edge_index = torch.LongTensor(np.load('Dataset/synthetic/edge.npy'))
 bot_label = np.load('Dataset/synthetic/bot_label.npy')
@@ -45,24 +55,40 @@ test_mask = ~train_mask
 target_var = torch.LongTensor(np.concatenate([bot_label[:,np.newaxis], outcome[:,np.newaxis], T[:,np.newaxis]], axis=-1))
 botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var, train_mask=train_mask, test_mask=test_mask)
 
-model = GCN(1, 16, 2) # feature=1, hidden=16, out=2
+model = GCN(1, 16, 1) # feature=1, hidden=16, out=1
 criterion = torch.nn.NLLLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
+
+
 def train():
     model.train()
-    for epoch in range(200):
+    for epoch in range(100):
         optimizer.zero_grad()
-        out = model(botData.x, botData.edge_index)[botData.train_mask]
-        loss = criterion(out, botData.y[:,0][botData.train_mask])
+        out = model(botData.x, botData.edge_index)
+        target = botData.y[:,0][botData.train_mask]
+        loss = anomaly_loss(target, out[botData.train_mask])
         loss.backward()
         optimizer.step()
         print(loss.item())
 
+        # model evaluation
+        threshold = torch.quantile(out, 0.96, dim=None, keepdim=False, interpolation='higher')
+        pred = out.clone()
+        pred[torch.where(out<threshold)]=0
+        pred[torch.where(out>=threshold)]=1
+        pred_label = pred[botData.train_mask]
+        report = classification_report(target, pred_label.detach().numpy(), target_names=['class0','class1'], output_dict=True)
+        print(report['class1']['precision'], report['class1']['recall'], report['macro avg']['f1-score'])
+
 @torch.no_grad()
 def test():
     model.eval()
-    _, pred = model(botData.x, botData.edge_index).max(dim=-1)
+    out = model(botData.x, botData.edge_index)
+    threshold = torch.quantile(out, 0.96, dim=None, keepdim=False, interpolation='higher')
+    pred = out.clone()
+    pred[torch.where(out < threshold)] = 0
+    pred[torch.where(out >= threshold)] = 1
     pred_label = pred[botData.test_mask]
     target = botData.y[:,0][botData.test_mask]
     report = classification_report(target, pred_label)
