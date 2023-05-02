@@ -3,13 +3,15 @@ import pandas as pd
 import random
 
 seed = 101
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
+random.seed(seed)
+np.random.seed(seed)
 
-sample_user = 2000
+sample_user = 3000
 sample_bot = 100
-betaZ = 1
+betaZ = 0.5
+betaT = 0.3
+betaB = 0.2
+EPSILON = 0.1
 
 
 N = sample_user + sample_bot
@@ -17,39 +19,67 @@ N = sample_user + sample_bot
 def generate_network(z, bl):
     # input: latent trait, bot label
     edge_idx = []
-    for i in range(len(z)):
-        for j in range(i + 1, len(z)):
-            p = 0.2 if bl[i] == bl[j] else 0.02
+    for i in range(N):
+        for j in range(i + 1, N):
+            if bl[i] or bl[j] == 1:
+                p = 0.01
+            else:
+                p = 0.1 if z[i] == z[j] else 0.005
             friend = np.random.binomial(1, p)
             if friend == 1:
-                edge_idx.append([i,j])
-    return edge_idx
+                edge_idx.append([i, j])
+    return np.array(edge_idx)
 
-def cal_influence(edge_idx, s0, bl):
+
+def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
     # edge_idx: (num_edge, 2)
     friend_dict = {}
-    for i in range(N):
-        u, v = edge_idx[i,:][0], edge_idx[i,:][1]
+    for i in range(len(edge_idx)):
+        u, v = edge_idx[i][0], edge_idx[i][1]
         friend_dict.setdefault(u, []).append(v)
+        friend_dict.setdefault(v, []).append(u)
 
-    inf_b, inf_u = np.zeros(N), np.zeros(N)
+    y = np.zeros(N)
+    Di, Bi = np.zeros(N), np.zeros(N)# 0-1 vector (sample_user + sample_bot)
+    T = np.zeros(N) # treat-control label
     for i in range(N):
-        friend = friend_dict[i]
-        friend_stance = s0[friend]
-        friend_b = np.nonzero(bl[friend])
-        friend_u = np.nonzero(1-bl[friend])
+        if i not in friend_dict:
+            y[i] = betaZ * Z[i] + eps[i]
+            continue
+        friend = friend_dict[i] # i's friend id
+        prop_u = set(friend)&set(propagator_id)
+        prop_b = np.nonzero(bl[friend])[0]
+        di = 1 if len(prop_u)>0 else 0
+        bi = 1 if len(prop_b)>0 else 0
+        if bl[i]==0 and di==1 and bi==0:
+            T[i] = 1    # treated
+        elif bl[i]==0 and di==0 and bi==1:
+            T[i] = -1
 
-        inf_b[i] = np.sum(friend_stance[friend_b])/len(friend_b)
-        inf_u[i] = np.sum(friend_stance[friend_u])/len(friend_u)
-    return inf_b, inf_u
+        Di[i], Bi[i] = di, bi
+        y[i] = betaZ * Z[i] + betaT * di + betaB * bi + eps[i]
+    y[y>=1] = 1
+    y[y<1] = 0
+    return y, Di, Bi, T
 
 
 bot_label = np.array([0]*sample_user+[1]*sample_bot)
-Z = np.random.choice([-1,0,1], sample_user+sample_bot)
-s0 = betaZ * Z
+Zu = np.random.choice([0,1], sample_user)
+Zb = np.ones(sample_bot)
+Z = np.concatenate([Zu, Zb])
+eps = np.random.normal(0, EPSILON, size=N)
+propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
 
+edge_index = generate_network(Z, bot_label)
+outcome, Di, Bi, T = cal_outcome(Z, edge_index, propagator_id, bot_label, eps)
+out_data = pd.DataFrame({'bot_label': bot_label,
+                         'Di': Di,
+                         'Bi': Bi,
+                         'treated': T,
+                         'purchase': outcome})
 
-
-match_score = []
-for zi in Z:
-    match_score
+np.save('Dataset/synthetic/edge.npy', edge_index)
+np.save('Dataset/synthetic/bot_label.npy', bot_label)
+np.save('Dataset/synthetic/T_label.npy', T)
+np.save('Dataset/synthetic/y.npy', outcome)
+out_data.to_csv('Dataset/synthetic/bot1.csv', index=False)
