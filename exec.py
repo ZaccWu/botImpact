@@ -16,6 +16,21 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+class MaskEncoder(torch.nn.Module):
+    def __init__(self, in_dim, h_dim, out_dim=16):
+        super(MaskEncoder, self).__init__()
+        self.convM1 = GCNConv(in_dim, h_dim)
+        self.convM2 = GCNConv(h_dim, out_dim)
+
+    def forward(self, x, edge_index):
+        xM1 = F.relu(self.convB1(x, edge_index))
+        xM1 = F.dropout(xM1, p=0.5, training=self.training)
+        xM2 = self.convB2(xM1, edge_index)
+
+        value = torch.sigmoid((xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1))
+        _, topk_homo = torch.topk(value, int(len(value)*0.5), largest=True)
+        _, topk_hetero = torch.topk(value, int(len(value)*0.5), largest=False)
+        return edge_index[topk_homo], edge_index[topk_hetero]
 
 class GCN_bot(torch.nn.Module):
     def __init__(self, in_dim, h_dim1, h_dim2, out_dim1=1, out_dim2=1):
@@ -45,6 +60,13 @@ def anomaly_loss(target, pred_score, m=1):
     cont_score = torch.max(torch.zeros(pred_score.shape), m-dev_score)
     loss = dev_score[(1-target).nonzero()].sum()+cont_score[target.nonzero()].sum()
     return loss
+
+def evaluate_metric(pred_0, pred_1, pred_c0, pred_c1):
+    tau_pred = torch.cat([pred_1, pred_c1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
+    tau_true = torch.ones(tau_pred.shape)
+    ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
+    eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
+    return eATE, ePEHE
 
 edge_index = torch.LongTensor(np.load('Dataset/synthetic/edge.npy'))
 bot_label = np.load('Dataset/synthetic/bot_label.npy')
@@ -78,32 +100,38 @@ def train():
         loss = loss_b + loss_y
         loss.backward()
         optimizer.step()
-        print(loss.item())
-
-
 
         if epoch%10 == 0:
             model1.eval()
             out_b, out_y = model1(botData.x, botData.edge_index)
             target_b, target_y = botData.y[:, 0][botData.train_mask], botData.y[:, 1][botData.train_mask]
+            tc_label = botData.y[:, 2][botData.train_mask]
 
-            # model evaluation
+            # bot detection result
             threshold = torch.quantile(out_b, 0.96, dim=None, keepdim=False, interpolation='higher')
             pred_b = out_b.clone()
             pred_b[torch.where(out_b < threshold)] = 0
             pred_b[torch.where(out_b >= threshold)] = 1
             pred_label_b = pred_b[botData.train_mask]
-
+            # outcome prediction result
             threshold = torch.quantile(out_y, 0.83, dim=None, keepdim=False, interpolation='higher')
             pred_y = out_y.clone()
             pred_y[torch.where(out_y < threshold)] = 0
             pred_y[torch.where(out_y >= threshold)] = 1
             pred_label_y = pred_y[botData.train_mask]
+            # treatment effect prediction result
+            idx_t, idx_c = torch.where(tc_label==1)[0], torch.where(tc_label==0)[0]
+            true_t, true_c = target_y[idx_t], target_y[idx_c]
+            pred_t, pred_c = pred_label_y[idx_t], pred_label_y[idx_c]
+            # TODO: generate counterfactual outcome
+            #eATE_test, ePEHE_test = evaluate_metric(pred_0, pred_1, pred_c0, pred_c1)
+
 
             report_b = classification_report(target_b, pred_label_b.detach().numpy())
             report_y = classification_report(target_y, pred_label_y.detach().numpy())
-            print("Epoch "+str(epoch)+" outcome report:", report_y)
             print("Epoch " + str(epoch) + " bot-detect report:", report_b)
+            print("Epoch "+str(epoch)+" outcome report:", report_y)
+
 
 
 @torch.no_grad()
@@ -128,8 +156,9 @@ def test():
 
     report_b = classification_report(target_b, pred_label_b)
     report_y = classification_report(target_y, pred_label_y)
-    print("outcome report:", report_y)
     print("bot-detect report:", report_b)
+    print("outcome report:", report_y)
+
 
     # purchase prediction
 
