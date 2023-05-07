@@ -22,9 +22,9 @@ def generate_network(z, bl):
     for i in range(N):
         for j in range(i + 1, N):
             if bl[i] or bl[j] == 1:
-                p = 0.01
+                p = 0.005
             else:
-                p = 0.1 if z[i] == z[j] else 0.005
+                p = 0.05 if z[i] == z[j] else 0.001
             friend = np.random.binomial(1, p)
             if friend == 1:
                 edge_idx.append([i, j])

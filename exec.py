@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple
 import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.utils import degree
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, SAGEConv
 from sklearn.metrics import classification_report
 
 seed = 101
@@ -69,8 +69,8 @@ class botDetect(torch.nn.Module):
 class impactDetect(torch.nn.Module):
     def __init__(self, in_dim, h_dim, out_dim=1):
         super(impactDetect, self).__init__()
-        self.convZ1 = GCNConv(in_dim, h_dim)
-        self.convZ2 = GCNConv(h_dim, h_dim)
+        self.convZ1 = SAGEConv(in_dim, h_dim)
+        self.convZ2 = SAGEConv(h_dim, h_dim)
         self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
@@ -227,8 +227,8 @@ def main():
             # treatment effect prediction result
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch " + str(epoch) + " bot-detect report:", report_b)
-            print('ATE: {:.4f}'.format(eATE_test.detach().numpy()),
-                  'PEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
+            print('eATE: {:.4f}'.format(eATE_test.detach().numpy()),
+                  'ePEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
 
 
     model1.eval()
@@ -238,7 +238,7 @@ def main():
     homo_edge_index, hetero_edge_index = model1(botData.x, botData.edge_index)
     fake_fact_graph = generate_counterfactual_edge(edge_pool, var_edge_index=homo_edge_index,
                                                    inv_edge_index=hetero_edge_index)  # for effect estimation
-    botData_fake_fact = Data(x=x.unsqueeze(-1), edge_index=fake_fact_graph.t().contiguous(), y=target_var,
+    botData_fake_fact = Data(x=x.unsqueeze(-1), edge_index=fake_fact_graph.contiguous(), y=target_var,
                              train_mask=train_mask,
                              test_mask=test_mask)
 
