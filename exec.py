@@ -84,8 +84,8 @@ class impactDetect(torch.nn.Module):
         xZ2, xfZ2 = self.convZ2(xZ1, edge_index), self.convZ2(xfZ1, fake_edge_index)    # xZ2/xfZ2: (num_nodes, h_dim)
 
         # predict outcome
-        y1, yc0 = self.yNet1(xZ2[mask][treat_idx]), self.yNet1(xfZ2[mask][treat_idx])
-        y0, yc1 = self.yNet0(xZ2[mask][control_idx]), self.yNet0(xfZ2[mask][control_idx])
+        y1, yc0 = self.yNet1(xZ2[mask][treat_idx]), self.yNet0(xfZ2[mask][treat_idx])       # yc0：如果有bot的node周围没bot会怎样
+        y0, yc1 = self.yNet0(xZ2[mask][control_idx]), self.yNet1(xfZ2[mask][control_idx])   # yc1: 如果没bot的node周围有bot会怎么样
         # judge the node is from factual & counterfactual graph
         fprob, fprob_f = self.propenNet(xZ2), self.propenNet(xfZ2)
         # judge the node is treated or controled
@@ -114,11 +114,23 @@ def contrastive_loss(target, pred_score, m=1):
     return loss
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
+    print("pred_c1:", pred_c1)
+    print("pred_0:", pred_0)
+    print("pred_c0:", pred_c0)
+    print("pred_1:", pred_1)
+
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    tau_true = torch.ones(tau_pred.shape) * 0.1
+    print("tau_pred:", tau_pred)
+    tau_true = torch.ones(tau_pred.shape) * -0.1
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
     return eATE, ePEHE
+
+def transfer_pred(out, threshold):
+    pred = out.clone()
+    pred[torch.where(out < threshold)] = 0
+    pred[torch.where(out >= threshold)] = 1
+    return pred
 
 def main():
     edge_index = torch.LongTensor(np.load('Dataset/synthetic/edge.npy'))    # (num_edge, 2)
@@ -197,12 +209,11 @@ def main():
         target_judgefact = torch.cat([torch.ones(len(fact_prob[botData.train_mask])),torch.zeros(len(fact_prob_f[botData.train_mask]))], dim=-1)
         out_judgefact = torch.cat([fact_prob[botData.train_mask], fact_prob_f[botData.train_mask]], dim=-1)
 
-        loss_y = contrastive_loss(target_y, out_y)
+        loss_y = F.mse_loss(out_y.float(), target_y.float())
         loss_judgefact = contrastive_loss(target_judgefact, out_judgefact)
         loss_judgetreat = contrastive_loss(target_judgetreat, out_judgetreat)
 
-        print(loss_b.item(), loss_b_fake.item(), loss_y.item(), loss_judgefact.item(), loss_judgetreat.item())
-        loss = loss_b + loss_b_fake + loss_y*10 + loss_judgefact*0.01 + loss_judgetreat*0.05
+        loss = loss_b*par['lb'] + loss_b_fake*par['lbf'] + loss_y*par['ly'] + loss_judgefact*par['ljf'] + loss_judgetreat*par['ljt']
         loss.backward()
         optimizer.step()
 
@@ -217,9 +228,7 @@ def main():
             target_b = botData.y[:, 0][botData.test_mask]
             # bot detection result
             threshold = torch.quantile(out_b, 0.96, dim=None, keepdim=False, interpolation='higher')
-            pred_b = out_b.clone()
-            pred_b[torch.where(out_b < threshold)] = 0
-            pred_b[torch.where(out_b >= threshold)] = 1
+            pred_b = transfer_pred(out_b, threshold)
             pred_label_b = pred_b[botData.test_mask]
             report_b = classification_report(target_b, pred_label_b.detach().numpy())
 
@@ -266,4 +275,10 @@ def main():
 
 
 if __name__ == "__main__":
+    par = {'lb': 1,
+           'lbf': 1,
+           'ly': 10,
+           'ljf': 0.1,
+           'ljt': 0.5}
+    print(par)
     main()
