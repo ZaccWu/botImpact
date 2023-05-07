@@ -54,7 +54,7 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
         if bl[i]==0 and di==1 and bi==0:
             T[i] = 1    # treated
         elif bl[i]==0 and di==0 and bi==1:
-            T[i] = -1
+            T[i] = -1   # control
 
         Di[i], Bi[i] = di, bi
         y[i] = betaZ * Z[i] + betaT * di + betaB * bi + eps[i]
