@@ -46,7 +46,9 @@ class MaskEncoder(torch.nn.Module):
         xM1 = F.relu(self.convM1(x, edge_index))
         xM1 = F.dropout(xM1, p=0.5, training=self.training)
         xM2 = self.convM2(xM1, edge_index)  # xM2: (num_nodes, h_dim)
-        value = torch.sigmoid((xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1)) # (num_edges)
+
+        value = (xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1) # (num_edges)
+
         _, topk_homo = torch.topk(value, int(len(value)*0.5), largest=True)
         _, topk_hetero = torch.topk(value, int(len(value)*0.5), largest=False)
         return edge_index[:,topk_homo], edge_index[:,topk_hetero]
@@ -69,11 +71,10 @@ class impactDetect(torch.nn.Module):
         super(impactDetect, self).__init__()
         self.convZ1 = GCNConv(in_dim, h_dim)
         self.convZ2 = GCNConv(h_dim, h_dim)
-        ## TODO: build a twin net for outcome prediction
-        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.ReLU())
-        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.ReLU())
-        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.ReLU())
-        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.ReLU())
+        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.grl = GRL_Layer()
 
     def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx, mask):
@@ -89,12 +90,11 @@ class impactDetect(torch.nn.Module):
         fprob, fprob_f = self.propenNet(xZ2), self.propenNet(xfZ2)
         # judge the node is treated or controled
         treat_prob = self.balanceNet(self.grl(xZ2))
-
         return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), fprob.squeeze(-1), fprob_f.squeeze(-1), treat_prob.squeeze(-1)
 
 
 
-def generate_counterfactual_edge(N, edge_pool, var_edge_index, inv_edge_index):
+def generate_counterfactual_edge(edge_pool, var_edge_index, inv_edge_index):
     # iput edge_index: (2, num_edge)
     inv_edge_pool = set(map(tuple, np.array(inv_edge_index.T)))
     var_edge_pool = set(map(tuple, np.array(var_edge_index.T)))
@@ -108,13 +108,13 @@ def contrastive_loss(target, pred_score, m=1):
     # target: 0-1, pred_score: float
     Rs = torch.mean(pred_score)
     delta = torch.std(pred_score)
-    dev_score = (pred_score - Rs)/delta
+    dev_score = (pred_score - Rs)/(delta + 10e-10)
     cont_score = torch.max(torch.zeros(pred_score.shape), m-dev_score)
     loss = dev_score[(1-target).nonzero()].sum()+cont_score[target.nonzero()].sum()
     return loss
 
-def evaluate_metric(pred_0, pred_1, pred_c0, pred_c1):
-    tau_pred = torch.cat([pred_1, pred_c1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
+def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
+    tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
     tau_true = torch.ones(tau_pred.shape) * 0.1
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
@@ -155,17 +155,18 @@ def main():
     treat_idx_ts, control_idx_ts = torch.where(treat_label_test==1)[0], torch.where(treat_label_test==-1)[0]
 
     # train
-    for epoch in range(100):
+    for epoch in range(300):
         model1.train()
         model2.train()
         model3.train()
         optimizer.zero_grad()
 
         homo_edge_index, hetero_edge_index = model1(botData.x, botData.edge_index)
-        fake_env_graph = generate_counterfactual_edge(N, edge_pool, var_edge_index=homo_edge_index,
-                                                      inv_edge_index=hetero_edge_index) # for bot detection
-        fake_fact_graph = generate_counterfactual_edge(N, edge_pool, var_edge_index=hetero_edge_index,
-                                                       inv_edge_index=homo_edge_index) # for effect estimation
+
+        fake_env_graph = generate_counterfactual_edge(edge_pool, var_edge_index=hetero_edge_index,
+                                                      inv_edge_index=homo_edge_index) # for bot detection
+        fake_fact_graph = generate_counterfactual_edge(edge_pool, var_edge_index=homo_edge_index,
+                                                       inv_edge_index=hetero_edge_index) # for effect estimation
 
         botData_fake_env = Data(x=x.unsqueeze(-1), edge_index=fake_env_graph.contiguous(), y=target_var, train_mask=train_mask,
                        test_mask=test_mask)
@@ -200,7 +201,8 @@ def main():
         loss_judgefact = contrastive_loss(target_judgefact, out_judgefact)
         loss_judgetreat = contrastive_loss(target_judgetreat, out_judgetreat)
 
-        loss = loss_b + loss_b_fake + loss_y + loss_judgefact + loss_judgetreat
+        print(loss_b.item(), loss_b_fake.item(), loss_y.item(), loss_judgefact.item(), loss_judgetreat.item())
+        loss = loss_b + loss_b_fake + loss_y*10 + loss_judgefact*0.01 + loss_judgetreat*0.05
         loss.backward()
         optimizer.step()
 
@@ -223,7 +225,7 @@ def main():
 
 
             # treatment effect prediction result
-            eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc0, out_yc1)
+            eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch " + str(epoch) + " bot-detect report:", report_b)
             print('ATE: {:.4f}'.format(eATE_test.detach().numpy()),
                   'PEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
@@ -234,8 +236,8 @@ def main():
     model3.eval()
 
     homo_edge_index, hetero_edge_index = model1(botData.x, botData.edge_index)
-    fake_fact_graph = generate_counterfactual_edge(N, var_edge_index=hetero_edge_index,
-                                                   inv_edge_index=homo_edge_index)  # for effect estimation
+    fake_fact_graph = generate_counterfactual_edge(edge_pool, var_edge_index=homo_edge_index,
+                                                   inv_edge_index=hetero_edge_index)  # for effect estimation
     botData_fake_fact = Data(x=x.unsqueeze(-1), edge_index=fake_fact_graph.t().contiguous(), y=target_var,
                              train_mask=train_mask,
                              test_mask=test_mask)
@@ -244,7 +246,7 @@ def main():
     out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData.x, botData.edge_index,
                                                                                   botData_fake_fact.x,
                                                                                   botData_fake_fact.edge_index,
-                                                                                  treat_idx_ts, control_idx_ts)
+                                                                                  treat_idx_ts, control_idx_ts, test_mask)
 
     target_b = botData.y[:, 0][botData.test_mask]
 
@@ -256,7 +258,7 @@ def main():
     pred_label_b = pred_b[botData.test_mask]
     report_b = classification_report(target_b, pred_label_b.detach().numpy())
     # treatment effect prediction result
-    eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1,out_yc0, out_yc1)
+    eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
 
     print("Testing for bot-detect report:", report_b)
     print("ATE: {:.4f}, PEHE: {:.4f}".format(eATE_test.detach().numpy(), ePEHE_test.detach().numpy()))
