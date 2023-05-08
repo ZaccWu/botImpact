@@ -58,8 +58,6 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
 
         Di[i], Bi[i] = di, bi
         y[i] = betaZ * Z[i] + betaT * di + betaB * bi + eps[i]
-    y[y>=1] = 1
-    y[y<1] = 0
     return y, Di, Bi, T
 
 for dt in ['train', 'test']:
