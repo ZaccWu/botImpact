@@ -65,12 +65,17 @@ for dt in ['train', 'test']:
     Zu = np.random.choice([0,1], sample_user)
     Zb = np.ones(sample_bot)
     Z = np.concatenate([Zu, Zb])
+    propagator = np.zeros(sample_user+sample_bot)
+
     eps = np.random.normal(0, EPSILON, size=N)
     propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
 
     edge_index = generate_network(Z, bot_label)
     outcome, Di, Bi, T = cal_outcome(Z, edge_index, propagator_id, bot_label, eps)
+    propagator[propagator_id] = 1
+
     out_data = pd.DataFrame({'bot_label': bot_label,
+                             'propagator': propagator,
                              'Di': Di,
                              'Bi': Bi,
                              'treated': T,
@@ -80,4 +85,5 @@ for dt in ['train', 'test']:
     np.save('Dataset/synthetic/'+dt+'_bot_label.npy', bot_label)
     np.save('Dataset/synthetic/'+dt+'_T_label.npy', T)
     np.save('Dataset/synthetic/'+dt+'_y.npy', outcome)
+    np.save('Dataset/synthetic/'+dt + '_prop_label.npy', propagator)
     out_data.to_csv('Dataset/synthetic/'+dt+'_bot1.csv', index=False)
