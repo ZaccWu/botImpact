@@ -9,15 +9,18 @@ from torch_geometric.data import Data
 from torch_geometric.utils import degree
 from torch_geometric.nn import GCNConv, SAGEConv
 from sklearn.metrics import classification_report
+import warnings
+warnings.filterwarnings("ignore")
 
 seed = 101
+gpu = 0
 random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
+device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
 
 class GradientReverseFunction(Function):
     @staticmethod
@@ -77,19 +80,19 @@ class impactDetect(torch.nn.Module):
         self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.grl = GRL_Layer()
 
-    def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx, mask):
+    def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx):
         # generate node embedding
         xZ1, xfZ1 = F.relu(self.convZ1(x, edge_index)), F.relu(self.convZ1(fake_x, fake_edge_index))
         xZ1, xfZ1 = F.dropout(xZ1, p=0.5, training=self.training), F.dropout(xfZ1, p=0.5, training=self.training)
         xZ2, xfZ2 = self.convZ2(xZ1, edge_index), self.convZ2(xfZ1, fake_edge_index)    # xZ2/xfZ2: (num_nodes, h_dim)
 
         # predict outcome
-        y1, yc0 = self.yNet1(xZ2[mask][treat_idx]), self.yNet0(xfZ2[mask][treat_idx])       # yc0：如果有bot的node周围没bot会怎样
-        y0, yc1 = self.yNet0(xZ2[mask][control_idx]), self.yNet1(xfZ2[mask][control_idx])   # yc1: 如果没bot的node周围有bot会怎么样
+        y1, yc0 = self.yNet1(xZ2[treat_idx]), self.yNet0(xfZ2[treat_idx])       # yc0：如果有bot的node周围没bot会怎样
+        y0, yc1 = self.yNet0(xZ2[control_idx]), self.yNet1(xfZ2[control_idx])   # yc1: 如果没bot的node周围有bot会怎么样
         # judge the node is from factual & counterfactual graph
         fprob, fprob_f = self.propenNet(xZ2), self.propenNet(xfZ2)
         # judge the node is treated or controled
-        treat_prob = self.balanceNet(self.grl(xZ2))
+        treat_prob = self.balanceNet(self.grl(xZ2)) # TODO: narrow the index
         return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), fprob.squeeze(-1), fprob_f.squeeze(-1), treat_prob.squeeze(-1)
 
 
@@ -103,6 +106,30 @@ def generate_counterfactual_edge(edge_pool, var_edge_index, inv_edge_index):
     new_edge_index = torch.cat([inv_edge_index, selected_edge.T], dim=1)
     return new_edge_index
 
+def match_node(fake_fact_graph, bot_label, purchase_label, treat_idx, control_idx):
+    # 判断原始图中treat_idx对应节点在fake_fact_graph是否为control，返回有对应control的节点
+    friend_dict = {}
+    for i in range(len(fake_fact_graph[0])):
+        u, v = fake_fact_graph[0][i].item(), fake_fact_graph[1][i].item()
+        friend_dict.setdefault(u, []).append(v)
+
+    treat_idx_ok, control_idx_ok = [], []
+    for id in treat_idx.tolist():
+        if id not in friend_dict:
+            continue
+        friend = friend_dict[id]  # id's friend
+        if bot_label[friend].sum()==0 and purchase_label[friend].sum()>0:
+            treat_idx_ok.append(id)
+
+    for id in control_idx.tolist():
+        if id not in friend_dict:
+            continue
+        friend = friend_dict[id]  # id's friend
+        if purchase_label[friend].sum()==0 and bot_label[friend].sum()>0:
+            control_idx_ok.append(id)
+
+    return torch.LongTensor(treat_idx_ok), torch.LongTensor(control_idx_ok)
+
 
 def contrastive_loss(target, pred_score, m=1):
     # target: 0-1, pred_score: float
@@ -114,13 +141,7 @@ def contrastive_loss(target, pred_score, m=1):
     return loss
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
-    print("pred_c1:", pred_c1)
-    print("pred_0:", pred_0)
-    print("pred_c0:", pred_c0)
-    print("pred_1:", pred_1)
-
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    print("tau_pred:", tau_pred)
     tau_true = torch.ones(tau_pred.shape) * -0.1
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
@@ -132,26 +153,22 @@ def transfer_pred(out, threshold):
     pred[torch.where(out >= threshold)] = 1
     return pred
 
-def main():
-    edge_index = torch.LongTensor(np.load('Dataset/synthetic/edge.npy'))    # (num_edge, 2)
-    bot_label = np.load('Dataset/synthetic/bot_label.npy')
-    T = np.load('Dataset/synthetic/T_label.npy')
-    outcome = np.load('Dataset/synthetic/y.npy')
-
-    N = len(outcome)  # num of nodes
-    x = degree(edge_index[:, 0])  # user node degree as feature
-    # 随机选80%训练
-    node_idx = [i for i in range(N)]
-    random.shuffle(node_idx)
-    train_mask = torch.zeros(N, dtype=torch.bool)
-    train_mask[node_idx[:int(N * 0.8)]] = 1
-    test_mask = ~train_mask
-
+def load_data(dt):
+    # load train data
+    edge_index_train = torch.LongTensor(np.load('Dataset/synthetic/'+dt+'_edge.npy'))    # (num_edge, 2)
+    bot_label_train = np.load('Dataset/synthetic/'+dt+'_bot_label.npy')
+    T_train = np.load('Dataset/synthetic/'+dt+'_T_label.npy')
+    outcome_train = np.load('Dataset/synthetic/'+dt+'_y.npy')
+    N = len(outcome_train)  # num of nodes
+    x = degree(edge_index_train[:, 0])  # user node degree as feature
     target_var = torch.LongTensor(
-        np.concatenate([bot_label[:, np.newaxis], outcome[:, np.newaxis], T[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
+        np.concatenate([bot_label_train[:, np.newaxis], outcome_train[:, np.newaxis], T_train[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
+    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index_train.t().contiguous(), y=target_var)
+    return botData, N
 
-    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var, train_mask=train_mask,
-                   test_mask=test_mask)
+def main():
+    botData_train, N_train = load_data('train')
+    botData_test, N_test = load_data('train')
 
     model1 = MaskEncoder(in_dim=1, h_dim=16, out_dim=16)
     model2 = botDetect(in_dim=1, h_dim=16, out_dim=1)
@@ -160,11 +177,11 @@ def main():
                                   {'params': model2.parameters(), 'lr': 0.001},
                                   {'params': model3.parameters(), 'lr': 0.001}])
     # for counterfactual edge generation
-    edge_pool = set(map(tuple, np.array([[i, j] for i in range(N) for j in range(i, N)])))
-    treat_label_train = botData.y[:, 2][botData.train_mask]
-    treat_idx, control_idx = torch.where(treat_label_train==1)[0], torch.where(treat_label_train==-1)[0]
-    treat_label_test = botData.y[:, 2][botData.test_mask]
-    treat_idx_ts, control_idx_ts = torch.where(treat_label_test==1)[0], torch.where(treat_label_test==-1)[0]
+    edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
+    treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==1)[0], torch.where(botData_train.y[:, 2]==-1)[0]
+
+    edge_pool_test = set(map(tuple, np.array([[i, j] for i in range(N_test) for j in range(i, N_test)])))
+    treat_idx_test, control_idx_test = torch.where(botData_test.y[:, 2]==1)[0], torch.where(botData_test.y[:, 2]==-1)[0]
 
     # train
     for epoch in range(300):
@@ -173,41 +190,40 @@ def main():
         model3.train()
         optimizer.zero_grad()
 
-        homo_edge_index, hetero_edge_index = model1(botData.x, botData.edge_index)
-
-        fake_env_graph = generate_counterfactual_edge(edge_pool, var_edge_index=hetero_edge_index,
+        homo_edge_index, hetero_edge_index = model1(botData_train.x, botData_train.edge_index)
+        fake_env_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=hetero_edge_index,
                                                       inv_edge_index=homo_edge_index) # for bot detection
-        fake_fact_graph = generate_counterfactual_edge(edge_pool, var_edge_index=homo_edge_index,
+        fake_fact_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
                                                        inv_edge_index=hetero_edge_index) # for effect estimation
 
-        botData_fake_env = Data(x=x.unsqueeze(-1), edge_index=fake_env_graph.contiguous(), y=target_var, train_mask=train_mask,
-                       test_mask=test_mask)
-        botData_fake_fact = Data(x=x.unsqueeze(-1), edge_index=fake_fact_graph.contiguous(), y=target_var, train_mask=train_mask,
-                       test_mask=test_mask)
-
+        botData_fake_env = Data(x=botData_train.x, edge_index=fake_env_graph.contiguous(), y=botData_train.y)
+        botData_fake_fact = Data(x=botData_train.x, edge_index=fake_fact_graph.contiguous(), y=botData_train.y)
+        #print("original treat/control: ", treat_idx_train.shape, control_idx_train.shape)
+        treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_train.y[:, 0], botData_train.y[:, 1], treat_idx_train, control_idx_train)
+        #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
         # detect bot
-        out_b = model2(botData.x, botData.edge_index)   # out_b: (num_node, 1)
+        out_b = model2(botData_train.x, botData_train.edge_index)   # out_b: (num_node, 1)
         out_b_fake_fact = model2(botData_fake_env.x, botData_fake_env.edge_index)   # out_b_fake: (num_node, 1)
-        target_b = botData.y[:,0][botData.train_mask]   # target_b: (num_train_node)
-        target_b_fake = botData_fake_env.y[:,0][botData.train_mask] # target_b_fake: (num_train_node)
+        target_b = botData_train.y[:,0]   # target_b: (num_node)
+        target_b_fake = botData_fake_env.y[:,0] # target_b_fake: (num_node)
 
         # 最大化所有环境下bot识别的准确度
-        loss_b = contrastive_loss(target_b, out_b[botData.train_mask])
-        loss_b_fake = contrastive_loss(target_b_fake, out_b_fake_fact[botData.train_mask])
+        loss_b = contrastive_loss(target_b, out_b)
+        loss_b_fake = contrastive_loss(target_b_fake, out_b_fake_fact)
 
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
-        out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData.x, botData.edge_index,
-                                              botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx, control_idx, train_mask)
+        out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_train.x, botData_train.edge_index,
+                                              botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
         # out_y, target_y: (num_treat+control_train)
         out_y = torch.cat([out_y1, out_y0], dim=-1)
-        target_y = torch.cat([botData.y[:, 1][botData.train_mask][treat_idx], botData.y[:, 1][botData.train_mask][control_idx]])
+        target_y = torch.cat([botData_train.y[:, 1][treat_idx_ok], botData_train.y[:, 1][control_idx_ok]])
         # target_judgetreat: (num_treat+control_train)
-        target_judgetreat = torch.cat([torch.ones(len(treat_prob[botData.train_mask][treat_idx])),torch.zeros(len(treat_prob[botData.train_mask][control_idx]))], dim=-1)
-        out_judgetreat = torch.cat([treat_prob[botData.train_mask][treat_idx], treat_prob[botData.train_mask][control_idx]], dim=-1)
+        target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx_ok])),torch.zeros(len(treat_prob[control_idx_ok]))], dim=-1)
+        out_judgetreat = torch.cat([treat_prob[treat_idx_ok], treat_prob[control_idx_ok]], dim=-1)
         # target_judgefact, out_judgefact: (2*num_train)
-        target_judgefact = torch.cat([torch.ones(len(fact_prob[botData.train_mask])),torch.zeros(len(fact_prob_f[botData.train_mask]))], dim=-1)
-        out_judgefact = torch.cat([fact_prob[botData.train_mask], fact_prob_f[botData.train_mask]], dim=-1)
+        target_judgefact = torch.cat([torch.ones(len(fact_prob)),torch.zeros(len(fact_prob_f))], dim=-1)
+        out_judgefact = torch.cat([fact_prob, fact_prob_f], dim=-1)
 
         loss_y = F.mse_loss(out_y.float(), target_y.float())
         loss_judgefact = contrastive_loss(target_judgefact, out_judgefact)
@@ -221,21 +237,31 @@ def main():
             model1.eval()
             model2.eval()
             model3.eval()
-            out_b = model2(botData.x, botData.edge_index)
-            out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData.x, botData.edge_index,
-                                                                        botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ts, control_idx_ts, test_mask)
+            out_b = model2(botData_test.x, botData_test.edge_index)
+            fake_fact_graph = generate_counterfactual_edge(edge_pool_test, var_edge_index=homo_edge_index,
+                                                           inv_edge_index=hetero_edge_index)  # for effect estimation
+            botData_fake_fact = Data(x=botData_train.x, edge_index=fake_fact_graph.contiguous(), y=botData_train.y)
+            #print("original treat/control: ", treat_idx_test.shape, control_idx_test.shape)
+            treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], botData_test.y[:, 1],
+                                                      treat_idx_test, control_idx_test)
+            #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_test.x, botData_test.edge_index,
+                                                                        botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
 
-            target_b = botData.y[:, 0][botData.test_mask]
+            target_b = botData_test.y[:, 0]
             # bot detection result
             threshold = torch.quantile(out_b, 0.96, dim=None, keepdim=False, interpolation='higher')
             pred_b = transfer_pred(out_b, threshold)
-            pred_label_b = pred_b[botData.test_mask]
-            report_b = classification_report(target_b, pred_label_b.detach().numpy())
-
+            pred_label_b = pred_b
+            report_b = classification_report(target_b, pred_label_b.detach().numpy(), target_names=['class0', 'class1'], output_dict=True)
 
             # treatment effect prediction result
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
-            print("Epoch " + str(epoch) + " bot-detect report:", report_b)
+            print("Epoch: " + str(epoch))
+            print('test f1-0 {:.4f},'.format(report_b['class0']['f1-score']),
+                  'test f1-1 {:.4f},'.format(report_b['class1']['f1-score']),
+                  'test f1-macro {:.4f},'.format(report_b['macro avg']['f1-score']),
+                  'test acc {:.4f},'.format(report_b['accuracy']))
             print('eATE: {:.4f}'.format(eATE_test.detach().numpy()),
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
 
@@ -244,32 +270,35 @@ def main():
     model2.eval()
     model3.eval()
 
-    homo_edge_index, hetero_edge_index = model1(botData.x, botData.edge_index)
-    fake_fact_graph = generate_counterfactual_edge(edge_pool, var_edge_index=homo_edge_index,
+    homo_edge_index, hetero_edge_index = model1(botData_test.x, botData_test.edge_index)
+    fake_fact_graph = generate_counterfactual_edge(edge_pool_test, var_edge_index=homo_edge_index,
                                                    inv_edge_index=hetero_edge_index)  # for effect estimation
-    botData_fake_fact = Data(x=x.unsqueeze(-1), edge_index=fake_fact_graph.contiguous(), y=target_var,
-                             train_mask=train_mask,
-                             test_mask=test_mask)
+    botData_fake_fact = Data(x=botData_test.x.unsqueeze(-1), edge_index=fake_fact_graph.contiguous(), y=botData_test.y)
+    treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], botData_test.y[:, 1],
+                                              treat_idx_test, control_idx_test)
 
-    out_b = model2(botData.x, botData.edge_index)
-    out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData.x, botData.edge_index,
+    out_b = model2(botData_test.x, botData_test.edge_index)
+    out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_test.x, botData_test.edge_index,
                                                                                   botData_fake_fact.x,
                                                                                   botData_fake_fact.edge_index,
-                                                                                  treat_idx_ts, control_idx_ts, test_mask)
+                                                                                  treat_idx_ok, control_idx_ok)
 
-    target_b = botData.y[:, 0][botData.test_mask]
+    target_b = botData_test.y[:, 0]
 
     # bot detection
     threshold = torch.quantile(out_b, 0.96, dim=None, keepdim=False, interpolation='higher')
     pred_b = out_b.clone()
     pred_b[torch.where(out_b < threshold)] = 0
     pred_b[torch.where(out_b >= threshold)] = 1
-    pred_label_b = pred_b[botData.test_mask]
-    report_b = classification_report(target_b, pred_label_b.detach().numpy())
+    pred_label_b = pred_b
+    report_b = classification_report(target_b, pred_label_b.detach().numpy(), target_names=['class0', 'class1'], output_dict=True)
     # treatment effect prediction result
     eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
 
-    print("Testing for bot-detect report:", report_b)
+    print('test f1-0 {:.4f},'.format(report_b['class0']['f1-score']),
+          'test f1-1 {:.4f},'.format(report_b['class1']['f1-score']),
+          'test f1-macro {:.4f},'.format(report_b['macro avg']['f1-score']),
+          'test acc {:.4f},'.format(report_b['accuracy']))
     print("ATE: {:.4f}, PEHE: {:.4f}".format(eATE_test.detach().numpy(), ePEHE_test.detach().numpy()))
 
 

@@ -62,24 +62,24 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
     y[y<1] = 0
     return y, Di, Bi, T
 
+for dt in ['train', 'test']:
+    bot_label = np.array([0]*sample_user+[1]*sample_bot)
+    Zu = np.random.choice([0,1], sample_user)
+    Zb = np.ones(sample_bot)
+    Z = np.concatenate([Zu, Zb])
+    eps = np.random.normal(0, EPSILON, size=N)
+    propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
 
-bot_label = np.array([0]*sample_user+[1]*sample_bot)
-Zu = np.random.choice([0,1], sample_user)
-Zb = np.ones(sample_bot)
-Z = np.concatenate([Zu, Zb])
-eps = np.random.normal(0, EPSILON, size=N)
-propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
+    edge_index = generate_network(Z, bot_label)
+    outcome, Di, Bi, T = cal_outcome(Z, edge_index, propagator_id, bot_label, eps)
+    out_data = pd.DataFrame({'bot_label': bot_label,
+                             'Di': Di,
+                             'Bi': Bi,
+                             'treated': T,
+                             'purchase': outcome})
 
-edge_index = generate_network(Z, bot_label)
-outcome, Di, Bi, T = cal_outcome(Z, edge_index, propagator_id, bot_label, eps)
-out_data = pd.DataFrame({'bot_label': bot_label,
-                         'Di': Di,
-                         'Bi': Bi,
-                         'treated': T,
-                         'purchase': outcome})
-
-np.save('Dataset/synthetic/edge.npy', edge_index)
-np.save('Dataset/synthetic/bot_label.npy', bot_label)
-np.save('Dataset/synthetic/T_label.npy', T)
-np.save('Dataset/synthetic/y.npy', outcome)
-out_data.to_csv('Dataset/synthetic/bot1.csv', index=False)
+    np.save('Dataset/synthetic/'+dt+'_edge.npy', edge_index)
+    np.save('Dataset/synthetic/'+dt+'_bot_label.npy', bot_label)
+    np.save('Dataset/synthetic/'+dt+'_T_label.npy', T)
+    np.save('Dataset/synthetic/'+dt+'_y.npy', outcome)
+    out_data.to_csv('Dataset/synthetic/'+dt+'_bot1.csv', index=False)
