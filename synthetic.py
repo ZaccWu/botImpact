@@ -8,9 +8,9 @@ np.random.seed(seed)
 
 sample_user = 3000
 sample_bot = 100
-betaZ = 5
-betaT = 3
-betaB = 2
+betaZ = 1
+betaT = 2
+betaB = 1
 EPSILON = 0.1
 
 

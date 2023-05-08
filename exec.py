@@ -75,8 +75,8 @@ class impactDetect(torch.nn.Module):
         self.convZ2 = GCNConv(h_dim, h_dim)
         self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
-        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
-        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
         self.grl = GRL_Layer()
 
     def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx):
@@ -89,10 +89,10 @@ class impactDetect(torch.nn.Module):
         y1, yc0 = self.yNet1(xZ2[treat_idx]), self.yNet0(xfZ2[treat_idx])       # yc0：如果有bot的node周围没bot会怎样
         y0, yc1 = self.yNet0(xZ2[control_idx]), self.yNet1(xfZ2[control_idx])   # yc1: 如果没bot的node周围有bot会怎么样
         # judge the node is from factual & counterfactual graph
-        fprob, fprob_f = self.propenNet(xZ2), self.propenNet(xfZ2)
+        fprob, fprob_f = self.balanceNet(self.grl(xZ2)), self.balanceNet(self.grl(xfZ2))
         # judge the node is treated or controled
-        treat_prob, ftreat_prob = self.balanceNet(self.grl(xZ2)), self.balanceNet(self.grl(xfZ2))
-        return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), fprob.squeeze(-1), fprob_f.squeeze(-1), treat_prob.squeeze(-1), ftreat_prob.squeeze(-1)
+        tprob, tprob_f = self.propenNet(xZ2), self.propenNet(xfZ2)
+        return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), fprob.squeeze(-1), fprob_f.squeeze(-1), tprob.squeeze(-1), tprob_f.squeeze(-1)
 
 
 
@@ -141,6 +141,8 @@ def contrastive_loss(target, pred_score, m=1):
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
+    print("pred treat:", torch.mean(pred_1), torch.mean(pred_c1))
+    print("pred control:", torch.mean(pred_0), torch.mean(pred_c0))
     tau_true = torch.ones(tau_pred.shape) * -1
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
@@ -213,7 +215,7 @@ def main():
 
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
-        out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob, ftreat_prob = model3(botData_train.x, botData_train.edge_index,
+        out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob, treat_prob_f = model3(botData_train.x, botData_train.edge_index,
                                               botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
         # check the outcome prediction
         #print(out_y1.shape, out_yc0.shape, out_y0.shape, out_yc1.shape)
@@ -226,19 +228,21 @@ def main():
         target_y = torch.cat([botData_train.y[:, 1][treat_idx_ok], botData_train.y[:, 1][control_idx_ok]])
 
         # target_judgetreat: (num_treat+control_train) counterfactual图里面treat标签相反
-        target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx_ok])+len(ftreat_prob[control_idx_ok])),
-                                        torch.zeros(len(ftreat_prob[treat_idx_ok])+len(treat_prob[control_idx_ok]))], dim=-1)
-        out_judgetreat = torch.cat([treat_prob[treat_idx_ok],ftreat_prob[control_idx_ok],
-                                     ftreat_prob[treat_idx_ok],treat_prob[control_idx_ok]], dim=-1)
+        target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx_ok])+len(treat_prob_f[control_idx_ok])),torch.zeros(len(treat_prob[control_idx_ok])+len(treat_prob_f[treat_idx_ok]))])
+        out_judgetreat = torch.cat([treat_prob[treat_idx_ok], treat_prob_f[control_idx_ok],
+                                     treat_prob[control_idx_ok], treat_prob_f[treat_idx_ok]], dim=0)
 
         # target_judgefact, out_judgefact: (2*num_train)
         target_judgefact = torch.cat([torch.ones(len(fact_prob)),torch.zeros(len(fact_prob_f))], dim=-1)
-        out_judgefact = torch.cat([fact_prob, fact_prob_f], dim=-1)
-        
+        out_judgefact = torch.cat([fact_prob, fact_prob_f], dim=0)
+        #print("pred treat compare:", torch.mean(treat_prob[treat_idx_ok]).item(), torch.mean(treat_prob[control_idx_ok]).item())
         loss_y = F.mse_loss(out_y.float(), target_y.float())
-        loss_judgefact = contrastive_loss(target_judgefact, out_judgefact)
-        loss_judgetreat = contrastive_loss(target_judgetreat, out_judgetreat)
+        #loss_judgefact = contrastive_loss(target_judgefact, out_judgefact)
+        loss_judgefact = torch.nn.CrossEntropyLoss()(out_judgefact, target_judgefact.long())
+        loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
+        #loss_judgetreat = contrastive_loss(target_judgetreat, out_judgetreat)
 
+        print("{:.4f} {:.4f} {:.4f} {:.4f} {:.4f}".format(loss_b.item(),loss_b_fake.item(),loss_y.item(),loss_judgefact.item(),loss_judgetreat.item()))
         loss = loss_b*par['lb'] + loss_b_fake*par['lbf'] + loss_y*par['ly'] + loss_judgefact*par['ljf'] + loss_judgetreat*par['ljt']
         loss.backward()
         optimizer.step()
@@ -319,8 +323,8 @@ if __name__ == "__main__":
 
     par = {'lb': 1,
            'lbf': 1,
-           'ly': 10,
-           'ljf': 0.1,
-           'ljt': 0.5}
+           'ly': 1,
+           'ljf': 500,
+           'ljt': 100}
     print(par)
     main()
