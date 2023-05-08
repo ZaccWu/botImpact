@@ -71,8 +71,8 @@ class botDetect(torch.nn.Module):
 class impactDetect(torch.nn.Module):
     def __init__(self, in_dim, h_dim, out_dim=1):
         super(impactDetect, self).__init__()
-        self.convZ1 = SAGEConv(in_dim, h_dim)
-        self.convZ2 = SAGEConv(h_dim, h_dim)
+        self.convZ1 = GCNConv(in_dim, h_dim)
+        self.convZ2 = GCNConv(h_dim, h_dim)
         self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
@@ -117,14 +117,14 @@ def match_node(fake_fact_graph, bot_label, prop_label, treat_idx, control_idx):
         if id not in friend_dict:
             continue
         friend = friend_dict[id]  # id's friend
-        if bot_label[friend].sum()==0 and prop_label[friend].sum()>0:
+        if bot_label[friend].sum()>0 and prop_label[friend].sum()==0:
             treat_idx_ok.append(id)
 
     for id in control_idx.tolist():
         if id not in friend_dict:
             continue
         friend = friend_dict[id]  # id's friend
-        if prop_label[friend].sum()==0 and bot_label[friend].sum()>0:
+        if prop_label[friend].sum()>0 and bot_label[friend].sum()==0:
             control_idx_ok.append(id)
 
     return torch.LongTensor(treat_idx_ok), torch.LongTensor(control_idx_ok)
@@ -140,10 +140,8 @@ def contrastive_loss(target, pred_score, m=1):
     return loss
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
-    print("pred t:", torch.mean(pred_1).item(), torch.mean(pred_c1).item())
-    print("pred c:", torch.mean(pred_0).item(), torch.mean(pred_c0).item())
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    tau_true = torch.ones(tau_pred.shape) * -0.1
+    tau_true = torch.ones(tau_pred.shape) * -1
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
     return eATE, ePEHE
@@ -180,10 +178,10 @@ def main():
                                   {'params': model3.parameters(), 'lr': 0.001}])
     # for counterfactual edge generation
     edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
-    treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==1)[0], torch.where(botData_train.y[:, 2]==-1)[0]
+    treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
 
     edge_pool_test = set(map(tuple, np.array([[i, j] for i in range(N_test) for j in range(i, N_test)])))
-    treat_idx_test, control_idx_test = torch.where(botData_test.y[:, 2]==1)[0], torch.where(botData_test.y[:, 2]==-1)[0]
+    treat_idx_test, control_idx_test = torch.where(botData_test.y[:, 2]==-1)[0], torch.where(botData_test.y[:, 2]==1)[0]
 
     # train
     for epoch in range(300):
@@ -217,6 +215,12 @@ def main():
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
         out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob, ftreat_prob = model3(botData_train.x, botData_train.edge_index,
                                               botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
+        # check the outcome prediction
+        #print(out_y1.shape, out_yc0.shape, out_y0.shape, out_yc1.shape)
+        #print("pred t:", torch.mean(out_y1).item(), torch.mean(out_yc1).item())
+        #print("true t:", torch.mean(botData_train.y[:, 1][treat_idx_ok]))
+        #print("pred c:", torch.mean(out_y0).item(), torch.mean(out_yc0).item())
+        #print("true c:", torch.mean(botData_train.y[:, 1][control_idx_ok]))
         # out_y, target_y: (num_treat+control_train)
         out_y = torch.cat([out_y1, out_y0], dim=-1)
         target_y = torch.cat([botData_train.y[:, 1][treat_idx_ok], botData_train.y[:, 1][control_idx_ok]])
@@ -230,10 +234,11 @@ def main():
         # target_judgefact, out_judgefact: (2*num_train)
         target_judgefact = torch.cat([torch.ones(len(fact_prob)),torch.zeros(len(fact_prob_f))], dim=-1)
         out_judgefact = torch.cat([fact_prob, fact_prob_f], dim=-1)
-
+        
         loss_y = F.mse_loss(out_y.float(), target_y.float())
         loss_judgefact = contrastive_loss(target_judgefact, out_judgefact)
         loss_judgetreat = contrastive_loss(target_judgetreat, out_judgetreat)
+
         loss = loss_b*par['lb'] + loss_b_fake*par['lbf'] + loss_y*par['ly'] + loss_judgefact*par['ljf'] + loss_judgetreat*par['ljt']
         loss.backward()
         optimizer.step()

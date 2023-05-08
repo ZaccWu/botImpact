@@ -8,9 +8,9 @@ np.random.seed(seed)
 
 sample_user = 3000
 sample_bot = 100
-betaZ = 0.5
-betaT = 0.3
-betaB = 0.2
+betaZ = 5
+betaT = 3
+betaB = 2
 EPSILON = 0.1
 
 
@@ -52,9 +52,9 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
         di = 1 if len(prop_u)>0 else 0
         bi = 1 if len(prop_b)>0 else 0
         if bl[i]==0 and di==1 and bi==0:
-            T[i] = 1    # treated
+            T[i] = 1    # control
         elif bl[i]==0 and di==0 and bi==1:
-            T[i] = -1   # control
+            T[i] = -1   # treat(have bot)
 
         Di[i], Bi[i] = di, bi
         y[i] = betaZ * Z[i] + betaT * di + betaB * bi + eps[i]
