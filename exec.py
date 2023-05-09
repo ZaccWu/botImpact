@@ -75,7 +75,9 @@ class impactDetect(torch.nn.Module):
         self.convZ2 = GCNConv(h_dim, h_dim)
         self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
-        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        #self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        #self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2))
         self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
         self.grl = GRL_Layer()
 
@@ -325,6 +327,6 @@ if __name__ == "__main__":
            'lbf': 1,
            'ly': 1,
            'ljf': 500,
-           'ljt': 100}
+           'ljt': 0}
     print(par)
     main()
