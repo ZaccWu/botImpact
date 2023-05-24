@@ -16,8 +16,12 @@ EPSILON = 0.1
 
 N = sample_user + sample_bot
 
-def generate_network(z, bl):
-    # input: latent trait, bot label
+
+def generate_network_1(z, bl):
+    '''
+    input: latent trait, bot label
+    human homophily connect, bot random connect
+    '''
     edge_idx = []
     for i in range(N):
         for j in range(i + 1, N):
@@ -30,7 +34,6 @@ def generate_network(z, bl):
                 edge_idx.append([i, j])
                 edge_idx.append([j, i])
     return np.array(edge_idx)
-
 
 def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
     # edge_idx: (num_edge, 2)
@@ -69,21 +72,23 @@ for dt in ['train', 'test']:
 
     eps = np.random.normal(0, EPSILON, size=N)
     propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
-
-    edge_index = generate_network(Z, bot_label)
-    outcome, Di, Bi, T = cal_outcome(Z, edge_index, propagator_id, bot_label, eps)
     propagator[propagator_id] = 1
+
+
+    edge_index_1 = generate_network_1(Z, bot_label)
+    outcome_1, Di_1, Bi_1, T_1 = cal_outcome(Z, edge_index_1, propagator_id, bot_label, eps)
+
 
     out_data = pd.DataFrame({'bot_label': bot_label,
                              'propagator': propagator,
-                             'Di': Di,
-                             'Bi': Bi,
-                             'treated': T,
-                             'purchase': outcome})
+                             'Di': Di_1,
+                             'Bi': Bi_1,
+                             'treated': T_1,
+                             'purchase': outcome_1})
 
-    np.save('Dataset/synthetic/'+dt+'_edge.npy', edge_index)
+    np.save('Dataset/synthetic/'+dt+'_edge.npy', edge_index_1)
     np.save('Dataset/synthetic/'+dt+'_bot_label.npy', bot_label)
-    np.save('Dataset/synthetic/'+dt+'_T_label.npy', T)
-    np.save('Dataset/synthetic/'+dt+'_y.npy', outcome)
+    np.save('Dataset/synthetic/'+dt+'_T_label.npy', T_1)
+    np.save('Dataset/synthetic/'+dt+'_y.npy', outcome_1)
     np.save('Dataset/synthetic/'+dt + '_prop_label.npy', propagator)
     out_data.to_csv('Dataset/synthetic/'+dt+'_bot1.csv', index=False)
