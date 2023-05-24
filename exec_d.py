@@ -7,12 +7,12 @@ from typing import Any, Optional, Tuple
 import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.utils import degree
-from torch_geometric.nn import GCNConv, SAGEConv
+from torch_geometric.nn import GCNConv, GATConv
 from sklearn.metrics import classification_report
 import warnings
 warnings.filterwarnings("ignore")
 
-seed = 102
+seed = 101
 
 random.seed(seed)
 np.random.seed(seed)
@@ -24,8 +24,8 @@ if torch.cuda.is_available():
 class MaskEncoder(torch.nn.Module):
     def __init__(self, in_dim, h_dim, out_dim=16):
         super(MaskEncoder, self).__init__()
-        self.convM1 = GCNConv(in_dim, h_dim)
-        self.convM2 = GCNConv(h_dim, out_dim)
+        self.convM1 = GATConv(in_dim, h_dim)
+        self.convM2 = GATConv(h_dim, out_dim)
 
     def forward(self, x, edge_index):
         # edge_index: (2, num_edge)
@@ -35,16 +35,16 @@ class MaskEncoder(torch.nn.Module):
 
         value = (xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1) # (num_edges)
 
-        _, topk_homo = torch.topk(value, int(len(value)*0.5), largest=True)
-        _, topk_hetero = torch.topk(value, int(len(value)*0.5), largest=False)
+        _, topk_homo = torch.topk(value, int(len(value)*0.95), largest=True)
+        _, topk_hetero = torch.topk(value, int(len(value)*0.05), largest=False)
         return edge_index[:,topk_homo], edge_index[:,topk_hetero]
 
 
 class botDetect(torch.nn.Module):
     def __init__(self, in_dim, h_dim, out_dim=2):
         super(botDetect, self).__init__()
-        self.convB1 = GCNConv(in_dim, h_dim)
-        self.convB2 = GCNConv(h_dim, out_dim)
+        self.convB1 = GATConv(in_dim, h_dim)
+        self.convB2 = GATConv(h_dim, out_dim)
 
     def forward(self, x, edge_index):
         xB1 = F.relu(self.convB1(x, edge_index))
@@ -56,8 +56,10 @@ def generate_counterfactual_edge(edge_pool, var_edge_index, inv_edge_index):
     # iput edge_index: (2, num_edge)
     inv_edge_pool = set(map(tuple, np.array(inv_edge_index.T)))
     var_edge_pool = set(map(tuple, np.array(var_edge_index.T)))
-    selected_edge = random.sample(edge_pool - inv_edge_pool - var_edge_pool, len(inv_edge_pool))
+
+    selected_edge = random.sample(edge_pool - inv_edge_pool - var_edge_pool, int(len(var_edge_pool)/2))
     selected_edge = torch.LongTensor(list(map(list, selected_edge)))
+    selected_edge = torch.cat([selected_edge,torch.flip(selected_edge,[1])],dim=0)
     new_edge_index = torch.cat([inv_edge_index, selected_edge.T], dim=1)
     return new_edge_index
 
@@ -86,7 +88,7 @@ def match_node(fake_fact_graph, bot_label, prop_label, treat_idx, control_idx):
     return torch.LongTensor(treat_idx_ok), torch.LongTensor(control_idx_ok)
 
 
-def contrastive_loss(target, pred_score, m=1):
+def contrastive_loss(target, pred_score, m=5):
     # target: 0-1, pred_score: float
     Rs = torch.mean(pred_score)
     delta = torch.std(pred_score)
@@ -121,10 +123,11 @@ def main():
     botData_test, N_test, prop_label_test = load_data('test')
     model1 = MaskEncoder(in_dim=1, h_dim=16, out_dim=16)
     model2 = botDetect(in_dim=1, h_dim=16, out_dim=1)
-    optimizer = torch.optim.Adam([{'params': model1.parameters(), 'lr': 0.0001},
-                                  {'params': model2.parameters(), 'lr': 0.0001}])
+    optimizer = torch.optim.Adam([{'params': model1.parameters(), 'lr': 0.001},
+                                  {'params': model2.parameters(), 'lr': 0.001}])
     # for counterfactual edge generation
-    edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
+    edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))|\
+                      set(map(tuple, np.array([[j, i] for i in range(N_train) for j in range(i, N_train)])))
     # train
     for epoch in range(300):
         model1.train()
@@ -132,10 +135,10 @@ def main():
         optimizer.zero_grad()
 
         homo_edge_index, hetero_edge_index = model1(botData_train.x, botData_train.edge_index)
-        fake_env_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=hetero_edge_index,
-                                                      inv_edge_index=homo_edge_index) # for bot detection
-
-        botData_fake_env = Data(x=botData_train.x, edge_index=fake_env_graph.contiguous(), y=botData_train.y)
+        if epoch%5 == 0:   # 每5个epoch换一个环境
+            fake_env_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=hetero_edge_index,
+                                                         inv_edge_index=homo_edge_index) # for bot detection
+            botData_fake_env = Data(x=botData_train.x, edge_index=fake_env_graph.contiguous(), y=botData_train.y)
 
         # detect bot
         out_b = model2(botData_train.x, botData_train.edge_index)   # out_b: (num_node, 1)
@@ -145,25 +148,25 @@ def main():
 
         # 最大化所有环境下bot识别的准确度
         loss_b = contrastive_loss(target_b, out_b)
+        #print("mean human: ", torch.mean(out_b[:3000]), " mean bot: ", torch.mean(out_b[3000:]))
         loss_b_fake = contrastive_loss(target_b_fake, out_b_fake_fact)
         print("{:.4f} {:.4f}".format(loss_b.item(),loss_b_fake.item()))
         loss = loss_b*par['lb'] + loss_b_fake*par['lbf']
         loss.backward()
         optimizer.step()
 
-        if epoch%10 == 0:
+        if epoch%1 == 0:
             model1.eval()
             model2.eval()
             # bot detection result
             out_b = model2(botData_test.x, botData_test.edge_index)
-            threshold = torch.quantile(out_b, 0.96, dim=None, keepdim=False, interpolation='higher')
+            threshold = torch.quantile(out_b, 0.9677, dim=None, keepdim=False, interpolation='higher')
             pred_b = transfer_pred(out_b, threshold)
             pred_label_b = pred_b
             report_b = classification_report(target_b, pred_label_b.detach().numpy(), target_names=['class0', 'class1'], output_dict=True)
-
             # bot detection result
             out_b_fake = model2(botData_fake_env.x, botData_fake_env.edge_index)
-            threshold = torch.quantile(out_b_fake, 0.96, dim=None, keepdim=False, interpolation='higher')
+            threshold = torch.quantile(out_b_fake, 0.9677, dim=None, keepdim=False, interpolation='higher')
             pred_b_fake = transfer_pred(out_b_fake, threshold)
             pred_label_b_fake = pred_b_fake
             report_b_fake = classification_report(target_b_fake, pred_label_b_fake.detach().numpy(), target_names=['class0', 'class1'], output_dict=True)
@@ -190,7 +193,7 @@ def main():
     # target_b = botData_test.y[:, 0]
     #
     # # bot detection
-    # threshold = torch.quantile(out_b, 0.96, dim=None, keepdim=False, interpolation='higher')
+    # threshold = torch.quantile(out_b, 0.9677, dim=None, keepdim=False, interpolation='higher')
     # pred_b = out_b.clone()
     # pred_b[torch.where(out_b < threshold)] = 0
     # pred_b[torch.where(out_b >= threshold)] = 1

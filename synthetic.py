@@ -2,9 +2,13 @@ import numpy as np
 import pandas as pd
 import random
 
+import torch
+from torch_geometric.utils import degree
+
 seed = 101
 random.seed(seed)
 np.random.seed(seed)
+
 
 sample_user = 3000
 sample_bot = 100
@@ -17,10 +21,9 @@ EPSILON = 0.1
 N = sample_user + sample_bot
 
 
-def generate_network_1(z, bl):
+def generate_network_1(z, bl, dt):
     '''
     input: latent trait, bot label
-    human homophily connect, bot random connect
     '''
     edge_idx = []
     for i in range(N):
@@ -28,11 +31,22 @@ def generate_network_1(z, bl):
             if bl[i] or bl[j] == 1:
                 p = 0.005
             else:
-                p = 0.05 if z[i] == z[j] else 0.001
+                p = 0.015 if z[i] == z[j] else 0.005
             friend = np.random.binomial(1, p)
             if friend == 1:
                 edge_idx.append([i, j])
                 edge_idx.append([j, i])
+    # elif dt == 'test':
+    #     for i in range(N):
+    #         for j in range(i + 1, N):
+    #             if bl[i] or bl[j] == 1:
+    #                 p = 0.004 + (j%5)*0.003
+    #             else:
+    #                 p = 0.03 if z[i] == z[j] else 0.005
+    #             friend = np.random.binomial(1, p)
+    #             if friend == 1:
+    #                 edge_idx.append([i, j])
+    #                 edge_idx.append([j, i])
     return np.array(edge_idx)
 
 def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
@@ -75,7 +89,7 @@ for dt in ['train', 'test']:
     propagator[propagator_id] = 1
 
 
-    edge_index_1 = generate_network_1(Z, bot_label)
+    edge_index_1 = generate_network_1(Z, bot_label, dt)
     outcome_1, Di_1, Bi_1, T_1 = cal_outcome(Z, edge_index_1, propagator_id, bot_label, eps)
 
 
