@@ -1,1 +1,3 @@
 exec：whole framework
+exec_b: framework with bot impact estimation only
+exec_d: framework with bot detection only
