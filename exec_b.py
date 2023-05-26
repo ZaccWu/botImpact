@@ -146,11 +146,11 @@ def transfer_pred(out, threshold):
 
 def load_data(dt):
     # load train data
-    edge_index_train = torch.LongTensor(np.load('Dataset/synthetic/'+dt+'_edge.npy'))    # (num_edge, 2)
-    bot_label_train = np.load('Dataset/synthetic/'+dt+'_bot_label.npy')
-    T_train = np.load('Dataset/synthetic/'+dt+'_T_label.npy')
-    outcome_train = np.load('Dataset/synthetic/'+dt+'_y.npy')
-    prop_label = np.load('Dataset/synthetic/'+dt+'_prop_label.npy')
+    edge_index_train = torch.LongTensor(np.load('Dataset/synthetic/'+type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
+    bot_label_train = np.load('Dataset/synthetic/'+type+'/'+dt+'_bot_label.npy')
+    T_train = np.load('Dataset/synthetic/'+type+'/'+dt+'_T_label.npy')
+    outcome_train = np.load('Dataset/synthetic/'+type+'/'+dt+'_y.npy')
+    prop_label = np.load('Dataset/synthetic/'+type+'/'+dt+'_prop_label.npy')
     N = len(outcome_train)  # num of nodes
     x = degree(edge_index_train[:, 0])  # user node degree as feature
     target_var = torch.tensor(
@@ -226,7 +226,7 @@ def main():
             model3.eval()
             fake_fact_graph = generate_counterfactual_edge(edge_pool_test, var_edge_index=homo_edge_index,
                                                            inv_edge_index=hetero_edge_index)  # for effect estimation
-            botData_fake_fact = Data(x=botData_train.x, edge_index=fake_fact_graph.contiguous(), y=botData_train.y)
+            botData_fake_fact = Data(x=botData_test.x, edge_index=fake_fact_graph.contiguous(), y=botData_test.y)
             #print("original treat/control: ", treat_idx_test.shape, control_idx_test.shape)
             treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], prop_label_test,
                                                       treat_idx_test, control_idx_test)
@@ -243,7 +243,6 @@ def main():
 
     model1.eval()
     model3.eval()
-
     homo_edge_index, hetero_edge_index = model1(botData_test.x, botData_test.edge_index)
     fake_fact_graph = generate_counterfactual_edge(edge_pool_test, var_edge_index=homo_edge_index,
                                                    inv_edge_index=hetero_edge_index)  # for effect estimation
@@ -254,7 +253,6 @@ def main():
                                                                                   botData_fake_fact.x,
                                                                                   botData_fake_fact.edge_index,
                                                                                   treat_idx_ok, control_idx_ok)
-
     # treatment effect prediction result
     eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
     print("ATE: {:.4f}, PEHE: {:.4f}".format(eATE_test.detach().numpy(), ePEHE_test.detach().numpy()))
@@ -262,9 +260,9 @@ def main():
 
 
 if __name__ == "__main__":
+    type = 'random'
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
-
     par = {'ly': 1,
            'ljf': 500,
            'ljt': 10}
