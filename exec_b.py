@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple
 import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.utils import degree
-from torch_geometric.nn import GCNConv, SAGEConv
+from torch_geometric.nn import GCNConv, GATConv
 from sklearn.metrics import classification_report
 import warnings
 warnings.filterwarnings("ignore")
@@ -51,21 +51,21 @@ class MaskEncoder(torch.nn.Module):
 
         value = (xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1) # (num_edges)
 
-        _, topk_homo = torch.topk(value, int(len(value)*0.5), largest=True)
-        _, topk_hetero = torch.topk(value, int(len(value)*0.5), largest=False)
+        _, topk_homo = torch.topk(value, int(len(value)*0.8), largest=True)
+        _, topk_hetero = torch.topk(value, int(len(value)*0.2), largest=False)
         return edge_index[:,topk_homo], edge_index[:,topk_hetero]
 
 class impactDetect(torch.nn.Module):
-    def __init__(self, in_dim, h_dim, out_dim=1):
+    def __init__(self, in_dim, h_dim, out_dim=1, heads=1):
         super(impactDetect, self).__init__()
-        self.convZ1 = GCNConv(in_dim, h_dim)
-        self.convZ2 = GCNConv(h_dim, h_dim)
-        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
-        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.convZ1 = GATConv(in_dim, h_dim, heads)
+        self.convZ2 = GATConv(h_dim*heads, h_dim, heads)
+        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, out_dim), torch.nn.LeakyReLU())
+        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, out_dim), torch.nn.LeakyReLU())
         #self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
         #self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
-        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2))
-        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, 2))
+        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
         self.grl = GRL_Layer()
 
     def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx):
@@ -162,8 +162,8 @@ def main():
     botData_train, N_train, prop_label_train = load_data('train')
     botData_test, N_test, prop_label_test = load_data('train')
 
-    model1 = MaskEncoder(in_dim=1, h_dim=16, out_dim=16)
-    model3 = impactDetect(in_dim=1, h_dim=16, out_dim=1)
+    model1 = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
+    model3 = impactDetect(in_dim=1, h_dim=32, out_dim=1)
     optimizer = torch.optim.Adam([{'params': model1.parameters(), 'lr': 0.001},
                                   {'params': model3.parameters(), 'lr': 0.001}])
     # for counterfactual edge generation
@@ -191,13 +191,6 @@ def main():
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
         out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob, treat_prob_f = model3(botData_train.x, botData_train.edge_index,
                                               botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
-        # check the outcome prediction
-        #print(out_y1.shape, out_yc0.shape, out_y0.shape, out_yc1.shape)
-        #print("pred t:", torch.mean(out_y1).item(), torch.mean(out_yc1).item())
-        #print("true t:", torch.mean(botData_train.y[:, 1][treat_idx_ok]))
-        #print("pred c:", torch.mean(out_y0).item(), torch.mean(out_yc0).item())
-        #print("true c:", torch.mean(botData_train.y[:, 1][control_idx_ok]))
-        # out_y, target_y: (num_treat+control_train)
         out_y = torch.cat([out_y1, out_y0], dim=-1)
         target_y = torch.cat([botData_train.y[:, 1][treat_idx_ok], botData_train.y[:, 1][control_idx_ok]])
 
@@ -224,13 +217,7 @@ def main():
         if epoch%10 == 0:
             model1.eval()
             model3.eval()
-            fake_fact_graph = generate_counterfactual_edge(edge_pool_test, var_edge_index=homo_edge_index,
-                                                           inv_edge_index=hetero_edge_index)  # for effect estimation
-            botData_fake_fact = Data(x=botData_test.x, edge_index=fake_fact_graph.contiguous(), y=botData_test.y)
-            #print("original treat/control: ", treat_idx_test.shape, control_idx_test.shape)
-            treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], prop_label_test,
-                                                      treat_idx_test, control_idx_test)
-            #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            # 验证/测试时无需新构造fake graph
             out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob, treat_prob_f = model3(botData_test.x, botData_test.edge_index,
                                                                         botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
 
@@ -241,30 +228,12 @@ def main():
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
 
 
-    model1.eval()
-    model3.eval()
-    homo_edge_index, hetero_edge_index = model1(botData_test.x, botData_test.edge_index)
-    fake_fact_graph = generate_counterfactual_edge(edge_pool_test, var_edge_index=homo_edge_index,
-                                                   inv_edge_index=hetero_edge_index)  # for effect estimation
-    botData_fake_fact = Data(x=botData_test.x, edge_index=fake_fact_graph.contiguous(), y=botData_test.y)
-    treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], prop_label_test,
-                                              treat_idx_test, control_idx_test)
-    out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob, treat_prob_f = model3(botData_test.x, botData_test.edge_index,
-                                                                                  botData_fake_fact.x,
-                                                                                  botData_fake_fact.edge_index,
-                                                                                  treat_idx_ok, control_idx_ok)
-    # treatment effect prediction result
-    eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
-    print("ATE: {:.4f}, PEHE: {:.4f}".format(eATE_test.detach().numpy(), ePEHE_test.detach().numpy()))
-
-
-
 if __name__ == "__main__":
-    type = 'random'
+    type = 'highbc'
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
-    par = {'ly': 1,
-           'ljf': 500,
-           'ljt': 10}
+    par = {'ly': 10,
+           'ljf': 10,
+           'ljt': 1}
     print(par)
     main()

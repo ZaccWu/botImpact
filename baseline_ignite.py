@@ -20,12 +20,12 @@ if torch.cuda.is_available():
 
 
 class Generator(torch.nn.Module):
-    def __init__(self, in_dim, h_dim, out_dim=1):
+    def __init__(self, in_dim, h_dim, out_dim=1, heads=8):
         super(Generator, self).__init__()
-        self.convZ1 = GATConv(in_dim, h_dim)
-        self.convZ2 = GATConv(h_dim, h_dim)
-        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
-        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.convZ1 = GATConv(in_dim, h_dim, heads=heads)
+        self.convZ2 = GATConv(h_dim*heads, h_dim, heads=heads)
+        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, out_dim), torch.nn.LeakyReLU())
+        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, out_dim), torch.nn.LeakyReLU())
     def forward(self, x, edge_index, treat_idx, control_idx):
         # generate node embedding
         xZ1 = F.relu(self.convZ1(x, edge_index))
@@ -39,12 +39,11 @@ class Generator(torch.nn.Module):
         return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), xZ2
 
 class Discriminator(torch.nn.Module):
-    def __init__(self, h_dim):
+    def __init__(self, h_dim, heads=8):
         super(Discriminator, self).__init__()
-        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(),
-                                             torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, h_dim), torch.nn.LeakyReLU(),
+                                             torch.nn.Linear(h_dim, 1), torch.nn.LeakyReLU())
 
-        self.dw = torch.nn.Parameter(torch.Tensor(h_dim, h_dim))    # discriminator weight
     def forward(self, xZ2):
         # judge the node is treat/control
         tprob = self.propenNet(xZ2)
@@ -53,6 +52,7 @@ class Discriminator(torch.nn.Module):
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
+    print(tau_pred)
     print("pred treat:", torch.mean(pred_1), torch.mean(pred_c1))
     print("pred control:", torch.mean(pred_0), torch.mean(pred_c0))
     tau_true = torch.ones(tau_pred.shape) * -1
@@ -124,10 +124,10 @@ def main():
 
 
 if __name__ == "__main__":
-    type = 'random'
+    type = 'highcc'
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
     par = {'ly': 1,
-           'lcb': 1}
+           'lcb': 100}
     print(par)
     main()

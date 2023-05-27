@@ -43,6 +43,8 @@ class Discriminator(torch.nn.Module):
         super(Discriminator, self).__init__()
         self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2))
         self.dw = torch.nn.Parameter(torch.Tensor(h_dim, h_dim))    # discriminator weight
+        torch.nn.init.xavier_normal_(self.dw)
+
     def forward(self, xZ2, xfZ2):
         S, Sf = torch.mean(xZ2, dim=0).unsqueeze(-1), torch.mean(xfZ2, dim=0).unsqueeze(-1)  # S/Sf: (h_dim, 1)
         S_, Sf_ = torch.mm(torch.mm(xZ2, self.dw), S), torch.mm(torch.mm(xfZ2, self.dw),Sf)
@@ -163,12 +165,11 @@ def main():
         if epoch%10 == 0:
             model_g.eval()
             model_d.eval()
-            fake_fact_graph = shuffle_edge(edge_pool_test, edge_num=len(botData_test.edge_index[0]))  # for effect estimation
-            botData_fake_fact = Data(x=botData_test.x, edge_index=fake_fact_graph.contiguous(), y=botData_test.y)
-            #print("original treat/control: ", treat_idx_test.shape, control_idx_test.shape)
-            treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], prop_label_test,
-                                                      treat_idx_test, control_idx_test)
-            #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            # 验证/测试时无需新构造fake graph
+            # fake_fact_graph = shuffle_edge(edge_pool_test, edge_num=len(botData_test.edge_index[0]))  # for effect estimation
+            # botData_fake_fact = Data(x=botData_test.x, edge_index=fake_fact_graph.contiguous(), y=botData_test.y)
+            # treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_test.y[:, 0], prop_label_test,
+            #                                           treat_idx_test, control_idx_test)
             out_y1, out_yc0, out_y0, out_yc1, z, zf = model_g(botData_test.x, botData_test.edge_index,
                                                                         botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
 
@@ -180,7 +181,7 @@ def main():
 
 
 if __name__ == "__main__":
-    type = 'random'
+    type = 'highcc'
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
     par = {'ly': 1,

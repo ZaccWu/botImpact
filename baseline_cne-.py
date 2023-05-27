@@ -111,7 +111,7 @@ def main():
 
 
 if __name__ == "__main__":
-    type = 'random'
+    type = 'highcc'
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
     par = {'ly': 1,

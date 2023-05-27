@@ -1,3 +1,5 @@
 exec：whole framework
 exec_b: framework with bot impact estimation only
 exec_d: framework with bot detection only
+
+best parameter：GCNConv两层；impactDetect：GATConv*1heads两层；h_dim=32；homo*0.8，hetero*0.2,；lr=0.001；ly:ljf:ljt=10:10:1
