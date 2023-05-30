@@ -216,7 +216,7 @@ def main():
     # botData_train, N_train, prop_label_train = load_syn_data('train')
     # botData_test, N_test, prop_label_test = load_syn_data('train')
     botData_train, N_train, prop_label_train, treat_idx_train, control_idx_train = load_emp_data(stance=2)
-    botData_test, N_test, prop_label_test, treat_idx_train, control_idx_train = load_emp_data(stance=2)
+    botData_test, N_test, prop_label_test, treat_idx_test, control_idx_test = load_emp_data(stance=2)
     # model1 = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
     # model3 = impactDetect(in_dim=1, h_dim=32, out_dim=1)
     model1 = MaskEncoder(in_dim=20, h_dim=32, out_dim=32)
@@ -243,10 +243,11 @@ def main():
 
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
+        ## TODO: 此处有疑问，感觉这里输入和target_y没有必要用treat_idx_ok，用treat_index_train就行
         out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_train.x, botData_train.edge_index,
-                                              botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
+                                              botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_train, control_idx_train)
         out_y = torch.cat([out_y1, out_y0], dim=-1)
-        target_y = torch.cat([botData_train.y[:, 1][treat_idx_ok], botData_train.y[:, 1][control_idx_ok]])
+        target_y = torch.cat([botData_train.y[:, 1][treat_idx_train], botData_train.y[:, 1][control_idx_train]])
 
         # target_judgetreat: (num_treat+control_train) counterfactual图里面treat标签相反
         target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx_train])),torch.zeros(len(treat_prob[control_idx_train]))])
@@ -272,7 +273,7 @@ def main():
             model3.eval()
             # 验证/测试时无需新构造fake graph
             out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_test.x, botData_test.edge_index,
-                                                                        botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_ok, control_idx_ok)
+                                                                        botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_test, control_idx_test)
 
             # treatment effect prediction result
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
