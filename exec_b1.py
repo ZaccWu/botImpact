@@ -144,7 +144,7 @@ def transfer_pred(out, threshold):
     pred[torch.where(out >= threshold)] = 1
     return pred
 
-def load_data(dt):
+def load_syn_data(dt):
     # load train data
     edge_index_train = torch.LongTensor(np.load('Dataset/synthetic/'+type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
     bot_label_train = np.load('Dataset/synthetic/'+type+'/'+dt+'_bot_label.npy')
@@ -158,34 +158,88 @@ def load_data(dt):
     botData = Data(x=x.unsqueeze(-1), edge_index=edge_index_train.t().contiguous(), y=target_var)
     return botData, N, prop_label
 
-def main():
-    botData_train, N_train, prop_label_train = load_data('train')
-    botData_test, N_test, prop_label_test = load_data('train')
+def load_emp_data(stance):
+    edge_index = torch.load("Dataset/MGTAB/edge_index.pt")
+    edge_index = torch.tensor(edge_index, dtype=torch.int64)  # (2, 1700108)
+    # follower, friend, mention, reply, quote, URL, hashtag
+    edge_type = torch.load("Dataset/MGTAB/edge_type.pt")  # (1700108)
+    # weight: direction or edge weight
+    edge_weight = torch.load("Dataset/MGTAB/edge_weight.pt")  # (1700108)
+    # neutral: 3776, against: 3637, support: 2786
+    stance_label = torch.load("Dataset/MGTAB/labels_stance.pt")  # (10199) 0-neutral, 1-against, 2-support
+    # human: 7451, bot: 2748
+    bot_label = torch.load("Dataset/MGTAB/labels_bot.pt")  # (10199) 0-human, 1-bot
+    # dim 0-19: profile features, dim 20-787: tweet features
+    features = torch.load("Dataset/MGTAB/features.pt")  # (10199, 788)
+    features = features.to(torch.float32)
 
-    model1 = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
-    model3 = impactDetect(in_dim=1, h_dim=32, out_dim=1)
+    edge_index_0, edge_index_1 = edge_index[:, (0 == edge_type)], edge_index[:, (1 == edge_type)]
+    edge_index = np.concatenate([edge_index_0, edge_index_1], axis=1)
+    N = len(stance_label)
+    x = features[:,:20]
+    T, prop_label = np.zeros(N), np.zeros(N)
+
+    print("constructing friend dict:...")
+    friend_dict = {}
+    for i in range(N):
+        u, v = edge_index[0][i], edge_index[1][i]
+        friend_dict.setdefault(u, []).append(v)
+    id_all = set(np.array([i for i in range(N)]))
+    id_s = id_all - set(np.nonzero(stance_label-stance)[0])
+    prop_label[list(map(int, id_s))] = 1
+
+    print("constructing treat/control:...")
+    treat_id = []
+    control_id = []
+    for i in range(N):
+        if i not in friend_dict.keys():
+            continue
+        for j in friend_dict[i]:
+            if stance_label[j] == stance:
+                if bot_label[j] == 1:
+                    treat_id.append(i)
+                elif bot_label[j] == 0:
+                    control_id.append(i)
+    treat_id, control_id = set(treat_id), set(control_id)
+    intersec = set(treat_id)&set(control_id)
+    treat_id = list(map(int, treat_id-intersec))
+    control_id = list(map(int, control_id-intersec))
+    print("len of treat/control/intersect:", len(treat_id), len(control_id), len(intersec))
+    T[treat_id] = -1
+    T[control_id] = -1
+    target_var = torch.tensor(
+        np.concatenate([bot_label[:, np.newaxis], stance_label[:, np.newaxis], T[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
+    botData = Data(x=x, edge_index=torch.LongTensor(edge_index).contiguous(), y=target_var)
+    return botData, N, prop_label, torch.LongTensor(treat_id), torch.LongTensor(control_id)
+
+def main():
+    # botData_train, N_train, prop_label_train = load_syn_data('train')
+    # botData_test, N_test, prop_label_test = load_syn_data('train')
+    botData_train, N_train, prop_label_train, treat_idx_train, control_idx_train = load_emp_data(stance=2)
+    botData_test, N_test, prop_label_test, treat_idx_train, control_idx_train = load_emp_data(stance=2)
+    # model1 = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
+    # model3 = impactDetect(in_dim=1, h_dim=32, out_dim=1)
+    model1 = MaskEncoder(in_dim=20, h_dim=32, out_dim=32)
+    model3 = impactDetect(in_dim=20, h_dim=32, out_dim=1)
     optimizer = torch.optim.Adam([{'params': model1.parameters(), 'lr': 0.001},
                                   {'params': model3.parameters(), 'lr': 0.001}])
     # for counterfactual edge generation
-    edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
-    treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
-
-    edge_pool_test = set(map(tuple, np.array([[i, j] for i in range(N_test) for j in range(i, N_test)])))
-    treat_idx_test, control_idx_test = torch.where(botData_test.y[:, 2]==-1)[0], torch.where(botData_test.y[:, 2]==1)[0]
+    #edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
+    edge_pool_train = {(i,j) for i in range(N_train) for j in range(i, N_train)}
+    #treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
 
     # train
     for epoch in range(300):
         model1.train()
         model3.train()
         optimizer.zero_grad()
-
         homo_edge_index, hetero_edge_index = model1(botData_train.x, botData_train.edge_index)
         fake_fact_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
                                                        inv_edge_index=hetero_edge_index) # for effect estimation
         botData_fake_fact = Data(x=botData_train.x, edge_index=fake_fact_graph.contiguous(), y=botData_train.y)
-        #print("original treat/control: ", treat_idx_train.shape, control_idx_train.shape)
+        print("original treat/control: ", treat_idx_train.shape, control_idx_train.shape)
         treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_train.y[:, 0], prop_label_train, treat_idx_train, control_idx_train)
-        #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+        print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
 
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
