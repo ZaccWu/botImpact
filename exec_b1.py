@@ -228,6 +228,8 @@ def main():
     edge_pool_train = {(i,j) for i in range(N_train) for j in range(i, N_train)}
     #treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
 
+
+    outcome_dict = {}
     # train
     for epoch in range(300):
         model1.train()
@@ -274,6 +276,12 @@ def main():
             # 验证/测试时无需新构造fake graph
             out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_test.x, botData_test.edge_index,
                                                                         botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_test, control_idx_test)
+            # for empirical data
+            res_y1, res_y0, res_yc0, res_yc1 = out_y1.detach().numpy(), out_y0.detach().numpy(), out_yc0.detach().numpy(), out_yc1.detach().numpy()
+            outcome_dict[str(epoch) + 'y1'] = np.pad(res_y1, (0, 500-len(res_y1)))
+            outcome_dict[str(epoch) + 'y0'] = np.pad(res_y0, (0, 500-len(res_y0)))
+            outcome_dict[str(epoch) + 'yc0'] = np.pad(res_yc0, (0, 500-len(res_yc0)))
+            outcome_dict[str(epoch) + 'yc1'] = np.pad(res_yc1, (0, 500-len(res_yc1)))
 
             # treatment effect prediction result
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
@@ -281,9 +289,15 @@ def main():
             print('eATE: {:.4f}'.format(eATE_test.detach().numpy()),
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
 
+    # for empirical data
+    res = pd.DataFrame(outcome_dict)
+    res.to_csv('result_outcome.csv', index=False)
+
+
 
 if __name__ == "__main__":
     type = 'random'
+    stance = 2  # for empirical data
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')
     par = {'ly': 10,
