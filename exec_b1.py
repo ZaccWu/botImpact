@@ -166,7 +166,9 @@ def load_emp_data(stance):
     # weight: direction or edge weight
     edge_weight = torch.load("Dataset/MGTAB/edge_weight.pt")  # (1700108)
     # neutral: 3776, against: 3637, support: 2786
-    stance_label = torch.load("Dataset/MGTAB/labels_stance.pt")  # (10199) 0-neutral, 1-against, 2-support
+    sl = torch.load("Dataset/MGTAB/labels_stance.pt")  # (10199) 0-neutral, 1-against, 2-support
+    stance_label = sl.marked_fill(sl==0, 1).masked_fill(sl==1, 0)
+
     # human: 7451, bot: 2748
     bot_label = torch.load("Dataset/MGTAB/labels_bot.pt")  # (10199) 0-human, 1-bot
     # dim 0-19: profile features, dim 20-787: tweet features
@@ -206,7 +208,7 @@ def load_emp_data(stance):
     control_id = list(map(int, control_id-intersec))
     print("len of treat/control/intersect:", len(treat_id), len(control_id), len(intersec))
     T[treat_id] = -1
-    T[control_id] = -1
+    T[control_id] = 1
     target_var = torch.tensor(
         np.concatenate([bot_label[:, np.newaxis], stance_label[:, np.newaxis], T[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
     botData = Data(x=x, edge_index=torch.LongTensor(edge_index).contiguous(), y=target_var)
