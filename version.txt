@@ -6,3 +6,5 @@ bot effect estimation：
 exec_b: predict treatment for factual/counterfactual
 exec_b1: predict treatment for factual only
 best parameter：GCNConv两层；impactDetect：GATConv*1heads两层；h_dim=32；homo*0.8，hetero*0.2,；lr=0.001；ly:ljf:ljt=10:10:1
+
+Mask encoder中的topK_homo设置为1则相当于去除了mask

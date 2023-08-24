@@ -51,8 +51,8 @@ class MaskEncoder(torch.nn.Module):
 
         value = (xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1) # (num_edges)
 
-        _, topk_homo = torch.topk(value, int(len(value)*0.8), largest=True)
-        _, topk_hetero = torch.topk(value, int(len(value)*0.2), largest=False)
+        _, topk_homo = torch.topk(value, int(len(value)*0.99), largest=True)
+        _, topk_hetero = torch.topk(value, int(len(value)*0.01), largest=False)
         return edge_index[:,topk_homo], edge_index[:,topk_hetero]
 
 class impactDetect(torch.nn.Module):
@@ -215,21 +215,25 @@ def load_emp_data(stance):
     return botData, N, prop_label, torch.LongTensor(treat_id), torch.LongTensor(control_id)
 
 def main():
-    # botData_train, N_train, prop_label_train = load_syn_data('train')
-    # botData_test, N_test, prop_label_test = load_syn_data('train')
-    botData_train, N_train, prop_label_train, treat_idx_train, control_idx_train = load_emp_data(stance=2)
-    botData_test, N_test, prop_label_test, treat_idx_test, control_idx_test = load_emp_data(stance=2)
-    # model1 = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
-    # model3 = impactDetect(in_dim=1, h_dim=32, out_dim=1)
-    model1 = MaskEncoder(in_dim=20, h_dim=32, out_dim=32)
-    model3 = impactDetect(in_dim=20, h_dim=32, out_dim=1)
+    # synthetic data
+    botData_train, N_train, prop_label_train = load_syn_data('train')
+    botData_test, N_test, prop_label_test = load_syn_data('test')
+    model1 = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
+    model3 = impactDetect(in_dim=1, h_dim=32, out_dim=1)
+
+    # empirical data
+    # botData_train, N_train, prop_label_train, treat_idx_train, control_idx_train = load_emp_data(stance=2)
+    # botData_test, N_test, prop_label_test, treat_idx_test, control_idx_test = load_emp_data(stance=2)
+    # model1 = MaskEncoder(in_dim=20, h_dim=32, out_dim=32)
+    # model3 = impactDetect(in_dim=20, h_dim=32, out_dim=1)
+
     optimizer = torch.optim.Adam([{'params': model1.parameters(), 'lr': 0.001},
                                   {'params': model3.parameters(), 'lr': 0.001}])
     # for counterfactual edge generation
     #edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
     edge_pool_train = {(i,j) for i in range(N_train) for j in range(i, N_train)}
-    #treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
-
+    treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
+    treat_idx_test, control_idx_test = torch.where(botData_test.y[:, 2] == -1)[0], torch.where(botData_test.y[:, 2] == 1)[0]
 
     outcome_dict = {}
     # train
@@ -241,9 +245,9 @@ def main():
         fake_fact_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
                                                        inv_edge_index=hetero_edge_index) # for effect estimation
         botData_fake_fact = Data(x=botData_train.x, edge_index=fake_fact_graph.contiguous(), y=botData_train.y)
-        print("original treat/control: ", treat_idx_train.shape, control_idx_train.shape)
+        #print("original treat/control: ", treat_idx_train.shape, control_idx_train.shape)
         treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_train.y[:, 0], prop_label_train, treat_idx_train, control_idx_train)
-        print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+        #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
 
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
@@ -267,7 +271,7 @@ def main():
         loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
         #loss_judgetreat = contrastive_loss(target_judgetreat, out_judgetreat)
 
-        print("{:.4f} {:.4f} {:.4f}".format(loss_y.item(),loss_judgefact.item(),loss_judgetreat.item()))
+        #print("{:.4f} {:.4f} {:.4f}".format(loss_y.item(),loss_judgefact.item(),loss_judgetreat.item()))
         loss = loss_y*par['ly'] + loss_judgefact*par['ljf'] + loss_judgetreat*par['ljt']
         loss.backward()
         optimizer.step()
@@ -279,11 +283,11 @@ def main():
             out_y1, out_yc0, out_y0, out_yc1, fact_prob, fact_prob_f, treat_prob = model3(botData_test.x, botData_test.edge_index,
                                                                         botData_fake_fact.x, botData_fake_fact.edge_index, treat_idx_test, control_idx_test)
             # for empirical data
-            res_y1, res_y0, res_yc0, res_yc1 = out_y1.detach().numpy(), out_y0.detach().numpy(), out_yc0.detach().numpy(), out_yc1.detach().numpy()
-            outcome_dict[str(epoch) + 'y1'] = np.pad(res_y1, (0, 500-len(res_y1)))
-            outcome_dict[str(epoch) + 'y0'] = np.pad(res_y0, (0, 500-len(res_y0)))
-            outcome_dict[str(epoch) + 'yc0'] = np.pad(res_yc0, (0, 500-len(res_yc0)))
-            outcome_dict[str(epoch) + 'yc1'] = np.pad(res_yc1, (0, 500-len(res_yc1)))
+            # res_y1, res_y0, res_yc0, res_yc1 = out_y1.detach().numpy(), out_y0.detach().numpy(), out_yc0.detach().numpy(), out_yc1.detach().numpy()
+            # outcome_dict[str(epoch) + 'y1'] = np.pad(res_y1, (0, 500-len(res_y1)))
+            # outcome_dict[str(epoch) + 'y0'] = np.pad(res_y0, (0, 500-len(res_y0)))
+            # outcome_dict[str(epoch) + 'yc0'] = np.pad(res_yc0, (0, 500-len(res_yc0)))
+            # outcome_dict[str(epoch) + 'yc1'] = np.pad(res_yc1, (0, 500-len(res_yc1)))
 
             # treatment effect prediction result
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
@@ -292,13 +296,13 @@ def main():
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
 
     # for empirical data
-    res = pd.DataFrame(outcome_dict)
-    res.to_csv('result_outcome.csv', index=False)
+    # res = pd.DataFrame(outcome_dict)
+    # res.to_csv('result_outcome.csv', index=False)
 
 
 
 if __name__ == "__main__":
-    type = 'random'
+    type = 'semi-homo-1'
     stance = 2  # for empirical data
     gpu = 0
     device = torch.device('cuda:{}'.format(gpu) if torch.cuda.is_available() else 'cpu')

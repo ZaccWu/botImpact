@@ -130,6 +130,56 @@ def generate_network(z, bl, type):
                 if friend == 1:
                     edge_idx.append([u, b])
                     edge_idx.append([b, u])
+
+    elif type == 'semi-homo-1':
+        for i in range(N):
+            for j in range(i + 1, N):
+                if bl[i] or bl[j] == 1:
+                    p = 0.01
+                else:
+                    p = 0.018 if z[i] == z[j] else 0.006
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([i, j])
+                    edge_idx.append([j, i])
+
+    elif type == 'semi-homo-2':
+        for i in range(N):
+            for j in range(i + 1, N):
+                if bl[i] or bl[j] == 1:
+                    p = 0.01
+                else:
+                    p = 0.016 if z[i] == z[j] else 0.007
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([i, j])
+                    edge_idx.append([j, i])
+
+    elif type == 'semi-homo-3':
+        for i in range(N):
+            for j in range(i + 1, N):
+                if bl[i] or bl[j] == 1:
+                    p = 0.01
+                else:
+                    p = 0.014 if z[i] == z[j] else 0.008
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([i, j])
+                    edge_idx.append([j, i])
+
+    elif type == 'semi-homo-4':
+        for i in range(N):
+            for j in range(i + 1, N):
+                if bl[i] or bl[j] == 1:
+                    p = 0.01
+                else:
+                    p = 0.012 if z[i] == z[j] else 0.009
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([i, j])
+                    edge_idx.append([j, i])
+
+
     return np.array(edge_idx)
 
 
@@ -164,9 +214,12 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
 # type = 'random'   # bots randomly connect
 # type = 'randomu'  # bots randomly connect users
 # type = 'highdu'   # bots connect high-degree users
-type = 'lowdu'   # bots connect low-degree users
+# type = 'lowdu'    # bots connect low-degree users
 # type = 'highbc'   # bots connect high-betweeness-centrality users
 # type = 'highcc'   # bots connect high-closeness-centrality users
+
+# other robustness check
+type = 'semi-homo-4'
 
 for dt in ['train', 'test']:
     bot_label = np.array([0]*sample_user+[1]*sample_bot)
