@@ -1,0 +1,10 @@
+original version
+- exec_202305：whole framework
+- exec_202305b: framework with bot impact estimation only (predict treatment for factual/counterfactual)
+- exec_202305d: framework with bot detection only
+
+Hicss version
+- HICSS code
+    - exec_202306b1_hicss: no mask encoder (Mask encoder中的topK_homo设置为1则相当于去除了mask) and predict treatment for factual only （best parameter：GCNConv两层；impactDetect：GATConv*1heads两层；h_dim=32；homo*0.8，hetero*0.2,；lr=0.001；ly:ljf:ljt=10:10:1）
+    - synthetic: simulation data
+    - some of the benchmark models
