@@ -159,14 +159,16 @@ def main():
         model1.train()
         model3.train()
         optimizer.zero_grad()
-
+        # mask encoder
         homo_edge_index, hetero_edge_index = model1(botData_train.x, botData_train.edge_index)
         # counterfactual graph generation
-        fake_fact_graph = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
+        cfgraph_edge = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
                                                        inv_edge_index=hetero_edge_index) # for effect estimation
-        botData_fake_fact = Data(x=botData_train.x, edge_index=fake_fact_graph.contiguous(), y=botData_train.y)
+
+
+        botData_fake_fact = Data(x=botData_train.x, edge_index=cfgraph_edge.contiguous(), y=botData_train.y)
         #print("original treat/control: ", treat_idx_train.shape, control_idx_train.shape)
-        treat_idx_ok, control_idx_ok = match_node(fake_fact_graph, botData_train.y[:, 0], prop_label_train, treat_idx_train, control_idx_train)
+        treat_idx_ok, control_idx_ok = match_node(cfgraph_edge, botData_train.y[:, 0], prop_label_train, treat_idx_train, control_idx_train)
         #print("matched treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
 
         # assess bot
