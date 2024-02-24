@@ -25,10 +25,10 @@ parser.add_argument('--mask_homo', type=float, help='mask edge percentage', defa
 # training parameters
 parser.add_argument('--seed', type=int, help='random seed', default=101)
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
-parser.add_argument('--ly', type=float, help='reg for outcome pred', default=10)
+parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1)
 parser.add_argument('--ljt', type=float, help='reg for treat pred', default=1)
-parser.add_argument('--ljf', type=float, help='reg for cf discrim', default=10)
-
+parser.add_argument('--ljf', type=float, help='reg for cf generate', default=10)
+parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1)
 
 try:
     args = parser.parse_args()
@@ -85,14 +85,14 @@ class BotImpact(torch.nn.Module):
         y0, yc1 = self.yNet0(xZ2[control_idx]), self.yNet1(xfZ2[control_idx])
 
         # judge the node is treated or controled
-        tprob, tprob_f = self.propenNet(xZ2), self.propenNet(xfZ2)
-        return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), xZ2, xfZ2, tprob.squeeze(-1), tprob_f.squeeze(-1)
+        tprob = self.propenNet(xZ2)
+        return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), xZ2, xfZ2, tprob.squeeze(-1)
 
 
 class Discriminator(torch.nn.Module):
     def __init__(self, h_dim, heads=1):
         super(Discriminator, self).__init__()
-        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, 2))
+        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, 2), torch.nn.LeakyReLU())
 
     def forward(self, xZ2, xfZ2):
         # judge the node is from factual & counterfactual graph
@@ -179,9 +179,6 @@ def load_data(dt):
 
 def main():
     botData_train, N_train, prop_label_train = load_data('train')
-
-    train_edge, _, _ = RandomLinkSplit(is_undirected=False, num_val=0, num_test=0, neg_sampling_ratio=1.0)(botData_train)
-
     model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
     model_g = BotImpact(in_dim=1, h_dim=32, out_dim=1)
     model_d = Discriminator(h_dim=32)
@@ -211,17 +208,23 @@ def main():
         #print("treat/control: ", treat_idx_train.shape, control_idx_train.shape)
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
-        out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, treat_prob, treat_prob_f = model_g(botData_train.x, botData_train.edge_index,
+        out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, treat_prob = model_g(botData_train.x, botData_train.edge_index,
                                               botData_cf.x, botData_cf.edge_index, treat_idx_train, control_idx_train)
+        # predict the outcome and treatment
         out_y = torch.cat([out_y1, out_y0], dim=-1)
         target_y = torch.cat([botData_train.y[:, 1][treat_idx_train], botData_train.y[:, 1][control_idx_train]])
-
         target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx_train])),torch.zeros(len(treat_prob[control_idx_train]))])
         out_judgetreat = torch.cat([treat_prob[treat_idx_train],treat_prob[control_idx_train]], dim=0)
+        # fool the discriminator
+        _, fact_prob_f = model_d(Zf.detach(), Zcf.detach())
+        target_cffool = torch.cat([torch.ones(len(fact_prob_f))], dim=-1)
+        loss_cffool = torch.nn.CrossEntropyLoss()(fact_prob_f, target_cffool.long())
+
         # loss function
         loss_y = F.mse_loss(out_y.float(), target_y.float())
         loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
-        loss_g = loss_y*args.ly + loss_judgetreat*args.ljt
+        # print("y, treat: {:.4f} {:.4f}".format(loss_y.item(), loss_judgetreat.item()))
+        loss_g = loss_y*args.ly + loss_judgetreat*args.ljt + loss_cffool * args.ljf
         loss_g.backward()
         optimizer_fg.step()
 
@@ -234,11 +237,12 @@ def main():
         out_judgefact = torch.cat([fact_prob, fact_prob_f], dim=0)
         #print("pred treat compare:", torch.mean(treat_prob[treat_idx_ok]).item(), torch.mean(treat_prob[control_idx_ok]).item())
         loss_judgefact = torch.nn.CrossEntropyLoss()(out_judgefact, target_judgefact.long())
-        loss_d = - loss_judgefact * args.ljf
-        loss_d.backward()   # loss_d越小, discriminator越不容易区分两者
+        loss_d = loss_judgefact * args.ljd
+        loss_d.backward()
         optimizer_d.step()
 
-        print("{:.4f} {:.4f}".format(loss_g.item(),loss_d.item()))
+        print("Pred_y: {:.4f} | Pred_t: {:.4f} | Fool_cf: {:.4f} | Judge_cf: {:.4f}"
+              .format(loss_y.item(),loss_judgetreat.item(),loss_cffool.item(),loss_judgefact.item()))
 
 
 
@@ -247,7 +251,7 @@ def main():
             # whether the node have a counterfactual counterpart
             treat_idx_ok, control_idx_ok = match_node(cfgraph_edge, botData_train.y[:, 0], prop_label_train,
                                                       treat_idx_train, control_idx_train)
-            out_y1, out_yc0, out_y0, out_yc1, _, _, _, _ = model_g(botData_train.x, botData_train.edge_index,
+            out_y1, out_yc0, out_y0, out_yc1, _, _, _ = model_g(botData_train.x, botData_train.edge_index,
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
             print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
