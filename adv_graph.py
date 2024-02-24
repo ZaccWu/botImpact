@@ -27,7 +27,7 @@ parser.add_argument('--seed', type=int, help='random seed', default=101)
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
 parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1)
 parser.add_argument('--ljt', type=float, help='reg for treat pred', default=1)
-parser.add_argument('--ljf', type=float, help='reg for cf generate', default=10)
+parser.add_argument('--ljf', type=float, help='reg for cf generate', default=1)
 parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1)
 
 try:
@@ -67,12 +67,14 @@ class BotImpact(torch.nn.Module):
         super(BotImpact, self).__init__()
         self.convZ1 = GATConv(in_dim, h_dim, heads)
         self.convZ2 = GATConv(h_dim*heads, h_dim, heads)
-        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, out_dim), torch.nn.LeakyReLU())
-        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, out_dim), torch.nn.LeakyReLU())
+        self.yNetS = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, h_dim), torch.nn.LeakyReLU())
+        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+
         #self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
         #self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
 
-        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, 2), torch.nn.LeakyReLU())
+        self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, 2), torch.nn.LeakyReLU())
 
     def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx):
         # generate node embedding
@@ -81,10 +83,10 @@ class BotImpact(torch.nn.Module):
         xZ2, xfZ2 = self.convZ2(xZ1, edge_index), self.convZ2(xfZ1, fake_edge_index)    # xZ2/xfZ2: (num_nodes, h_dim)
 
         # predict outcome
-        y1, yc0 = self.yNet1(xZ2[treat_idx]), self.yNet0(xfZ2[treat_idx])
-        y0, yc1 = self.yNet0(xZ2[control_idx]), self.yNet1(xfZ2[control_idx])
+        y1, yc0 = self.yNet1(self.yNetS(xZ2[treat_idx])), self.yNet0(self.yNetS(xfZ2[treat_idx])) # xfZ的treat_idx是counterfactual中的control
+        y0, yc1 = self.yNet0(self.yNetS(xZ2[control_idx])), self.yNet1(self.yNetS(xfZ2[control_idx]))
 
-        # judge the node is treated or controled
+        # predict treatment
         tprob = self.propenNet(xZ2)
         return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), xZ2, xfZ2, tprob.squeeze(-1)
 
@@ -92,7 +94,8 @@ class BotImpact(torch.nn.Module):
 class Discriminator(torch.nn.Module):
     def __init__(self, h_dim, heads=1):
         super(Discriminator, self).__init__()
-        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, 2), torch.nn.LeakyReLU())
+        self.balanceNet = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, h_dim), torch.nn.LeakyReLU(),
+                                              torch.nn.Linear(h_dim, 1), torch.nn.Sigmoid())
 
     def forward(self, xZ2, xfZ2):
         # judge the node is from factual & counterfactual graph
@@ -118,12 +121,12 @@ def recon_loss(z, edge_tar, neg_edge_tar):
 
 def generate_counterfactual_edge(edge_pool, var_edge_index, inv_edge_index):
     # iput edge_index: (2, num_edge)
-    inv_edge_pool = set(map(tuple, np.array(inv_edge_index.T)))
-    var_edge_pool = set(map(tuple, np.array(var_edge_index.T)))
+    inv_edge_pool = set(map(tuple, np.array(inv_edge_index.T.cpu())))
+    var_edge_pool = set(map(tuple, np.array(var_edge_index.T.cpu())))
     selected_edge = random.sample(edge_pool - inv_edge_pool - var_edge_pool, int(len(inv_edge_pool)/2))
     selected_edge = torch.LongTensor(list(map(list, selected_edge)))
     selected_edge = torch.cat([selected_edge,torch.flip(selected_edge,[1])],dim=0)
-    new_edge_index = torch.cat([inv_edge_index, selected_edge.T], dim=1)
+    new_edge_index = torch.cat([inv_edge_index, selected_edge.T.to(device)], dim=1)
     return new_edge_index
 
 def match_node(fake_fact_graph, bot_label, prop_label, treat_idx, control_idx):
@@ -151,11 +154,26 @@ def match_node(fake_fact_graph, bot_label, prop_label, treat_idx, control_idx):
     return torch.LongTensor(treat_idx_ok), torch.LongTensor(control_idx_ok)
 
 
+def pairwise_cosine_similarity(matrix1, matrix2):
+    # 求两个矩阵每一行的模
+    norm1 = torch.norm(matrix1, p=2, dim=1, keepdim=True)
+    norm2 = torch.norm(matrix2, p=2, dim=1, keepdim=True)
+
+    # 标准化矩阵
+    normalized_matrix1 = matrix1 / norm1
+    normalized_matrix2 = matrix2 / norm2
+
+    # 计算pair-wise相似度
+    similarity_matrix = torch.mm(normalized_matrix1, normalized_matrix2.t())
+
+    return similarity_matrix
+
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    print("pred treat:", torch.mean(pred_1), torch.mean(pred_c1))
-    print("pred control:", torch.mean(pred_0), torch.mean(pred_c0))
-    tau_true = torch.ones(tau_pred.shape) * -1
+    print("pred_0: {:.4f}  pred_1: {:.4f}".format(torch.mean(pred_0).item(), torch.mean(pred_1).item()))
+    print("pred_c0: {:.4f}  pred_c1: {:.4f}".format(torch.mean(pred_c0).item(), torch.mean(pred_c1).item()))
+    print("--------------------------------")
+    tau_true = torch.ones(tau_pred.shape).to(device) * -1
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
     return eATE, ePEHE
@@ -174,14 +192,14 @@ def load_data(dt):
     # target: bot&human, opinion, treat&control
     target_var = torch.tensor(
         np.concatenate([bot_label_train[:, np.newaxis], outcome_train[:, np.newaxis], T_train[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
-    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index_train.t().contiguous(), y=target_var)
+    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index_train.t().contiguous(), y=target_var).to(device)
     return botData, N, prop_label
 
 def main():
-    botData_train, N_train, prop_label_train = load_data('train')
-    model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=32)
-    model_g = BotImpact(in_dim=1, h_dim=32, out_dim=1)
-    model_d = Discriminator(h_dim=32)
+    botData_f, N_train, prop_label_train = load_data('train')
+    model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=32).to(device)
+    model_g = BotImpact(in_dim=1, h_dim=32, out_dim=1).to(device)
+    model_d = Discriminator(h_dim=32).to(device)
 
     optimizer_fg = torch.optim.Adam([{'params': model_f.parameters(), 'lr': 0.001},
                                   {'params': model_g.parameters(), 'lr': 0.001}])
@@ -189,7 +207,13 @@ def main():
 
     # for counterfactual edge generation
     edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
-    treat_idx_train, control_idx_train = torch.where(botData_train.y[:, 2]==-1)[0], torch.where(botData_train.y[:, 2]==1)[0]
+    treat_idx, control_idx = torch.where(botData_f.y[:, 2]==-1)[0], torch.where(botData_f.y[:, 2]==1)[0]
+
+    # 划分train-val (outcome mask)
+    treat_rd_idx, control_rd_idx = torch.randperm(treat_idx.size(0)), torch.randperm(control_idx.size(0))
+    Ntreat_train, Ncontrol_train = int(treat_idx.size(0) * 0.5), int(control_idx.size(0) * 0.5)
+    treat_idx_train, control_idx_train = treat_idx[treat_rd_idx[:Ntreat_train]], control_idx[control_rd_idx[:Ncontrol_train]]
+    treat_idx_test, control_idx_test = treat_idx[treat_rd_idx[Ntreat_train:]], control_idx[control_rd_idx[Ncontrol_train:]]
 
     # train
     for epoch in range(300):
@@ -199,30 +223,34 @@ def main():
 
         # mask encoder
         optimizer_fg.zero_grad()
-        homo_edge_index, hetero_edge_index, Z_f = model_f(botData_train.x, botData_train.edge_index)
+        homo_edge_index, hetero_edge_index, Z_f = model_f(botData_f.x, botData_f.edge_index)
 
         # counterfactual graph generation
         cfgraph_edge = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
                                                        inv_edge_index=hetero_edge_index) # for effect estimation
-        botData_cf = Data(x=botData_train.x, edge_index=cfgraph_edge.contiguous(), y=botData_train.y)
+        botData_cf = Data(x=botData_f.x, edge_index=cfgraph_edge.contiguous(), y=botData_f.y).to(device)
         #print("treat/control: ", treat_idx_train.shape, control_idx_train.shape)
         # assess bot
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
-        out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, treat_prob = model_g(botData_train.x, botData_train.edge_index,
+        out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, treat_prob = model_g(botData_f.x, botData_f.edge_index,
                                               botData_cf.x, botData_cf.edge_index, treat_idx_train, control_idx_train)
+
         # predict the outcome and treatment
         out_y = torch.cat([out_y1, out_y0], dim=-1)
-        target_y = torch.cat([botData_train.y[:, 1][treat_idx_train], botData_train.y[:, 1][control_idx_train]])
-        target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx_train])),torch.zeros(len(treat_prob[control_idx_train]))])
-        out_judgetreat = torch.cat([treat_prob[treat_idx_train],treat_prob[control_idx_train]], dim=0)
+        target_y = torch.cat([botData_f.y[:, 1][treat_idx_train], botData_f.y[:, 1][control_idx_train]])
+        #target_judgetreat = torch.cat([torch.ones(len(treat_prob[treat_idx])),torch.zeros(len(treat_prob[control_idx]))]).to(device)
+        #out_judgetreat = torch.cat([treat_prob[treat_idx],treat_prob[control_idx]], dim=0)
+
         # fool the discriminator
-        _, fact_prob_f = model_d(Zf.detach(), Zcf.detach())
-        target_cffool = torch.cat([torch.ones(len(fact_prob_f))], dim=-1)
-        loss_cffool = torch.nn.CrossEntropyLoss()(fact_prob_f, target_cffool.long())
+        _, fact_prob_cf = model_d(Zf.detach(), Zcf.detach())
+        loss_cffool = torch.nn.BCELoss()(fact_prob_cf, torch.ones_like(fact_prob_cf))
+
+
 
         # loss function
         loss_y = F.mse_loss(out_y.float(), target_y.float())
-        loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
+        #loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
+        loss_judgetreat = pairwise_cosine_similarity(Zf[treat_idx], Zf[control_idx]).mean()
         # print("y, treat: {:.4f} {:.4f}".format(loss_y.item(), loss_judgetreat.item()))
         loss_g = loss_y*args.ly + loss_judgetreat*args.ljt + loss_cffool * args.ljf
         loss_g.backward()
@@ -231,35 +259,48 @@ def main():
 
         # counterfactual discriminator
         optimizer_d.zero_grad()
-        fact_prob, fact_prob_f = model_d(Zf.detach(), Zcf.detach())
-        # target_judgefact, out_judgefact: (2*num_train)
-        target_judgefact = torch.cat([torch.ones(len(fact_prob)),torch.zeros(len(fact_prob_f))], dim=-1)
-        out_judgefact = torch.cat([fact_prob, fact_prob_f], dim=0)
+        fact_prob, fact_prob_cf = model_d(Zf.detach(), Zcf.detach())
         #print("pred treat compare:", torch.mean(treat_prob[treat_idx_ok]).item(), torch.mean(treat_prob[control_idx_ok]).item())
-        loss_judgefact = torch.nn.CrossEntropyLoss()(out_judgefact, target_judgefact.long())
+        loss_judgefact = torch.nn.BCELoss()(torch.cat([fact_prob, fact_prob_cf], dim=0),
+                                            torch.cat([torch.ones_like(fact_prob), torch.zeros_like(fact_prob_cf)], dim=0))
         loss_d = loss_judgefact * args.ljd
         loss_d.backward()
         optimizer_d.step()
 
-        print("Pred_y: {:.4f} | Pred_t: {:.4f} | Fool_cf: {:.4f} | Judge_cf: {:.4f}"
-              .format(loss_y.item(),loss_judgetreat.item(),loss_cffool.item(),loss_judgefact.item()))
+        # print("Pred_y: {:.4f} | Pred_t: {:.4f} | Fool_cf: {:.4f} | Judge_cf: {:.4f}"
+        #       .format(loss_y.item(),loss_judgetreat.item(),loss_cffool.item(),loss_judgefact.item()))
 
 
 
         if epoch%10 == 0:
             model_g.eval()
+            # evaluation for training stop
+            # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
+            out_y1, _, out_y0, _, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
+                                                                            botData_cf.x, botData_cf.edge_index,
+                                                                            treat_idx_test, control_idx_test)
+
+            # predict the outcome and treatment
+            out_y = torch.cat([out_y1, out_y0], dim=-1)
+            target_y = torch.cat([botData_f.y[:, 1][treat_idx_test], botData_f.y[:, 1][control_idx_test]])
+            outcome_MSE = F.mse_loss(out_y.float(), target_y.float())
+
             # whether the node have a counterfactual counterpart
-            treat_idx_ok, control_idx_ok = match_node(cfgraph_edge, botData_train.y[:, 0], prop_label_train,
-                                                      treat_idx_train, control_idx_train)
-            out_y1, out_yc0, out_y0, out_yc1, _, _, _ = model_g(botData_train.x, botData_train.edge_index,
+            treat_idx_ok, control_idx_ok = match_node(cfgraph_edge, botData_f.y[:, 0], prop_label_train,
+                                                      treat_idx, control_idx)
+            out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
+
             print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
-            print('eATE: {:.4f}'.format(eATE_test.detach().numpy()),
-                  'ePEHE: {:.4f}'.format(ePEHE_test.detach().numpy()))
+            print('MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
+            # print('EmbNorm: {:.4f}'.format(pairwise_cosine_similarity(Zf[treat_idx_ok], Zcf[control_idx_ok]).mean().item()))
+            # print('EmbNorm: {:.4f}'.format(pairwise_cosine_similarity(Zf[control_idx_ok], Zcf[treat_idx_ok]).mean().item()))
+            print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
+                  'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()))
+            print("================================")
 
 
 if __name__ == "__main__":
-
     main()
