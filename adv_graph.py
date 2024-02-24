@@ -54,7 +54,7 @@ class MaskEncoder(torch.nn.Module):
     def forward(self, x, edge_index):
         # edge_index: e(2, num_edge)
         xM1 = F.leaky_relu(self.convM1(x, edge_index))
-        xM1 = F.dropout(xM1, p=0.5, training=self.training)
+        #xM1 = F.dropout(xM1, p=0.5, training=self.training)
         xM2 = self.convM2(xM1, edge_index)  # xM2: (num_nodes, h_dim)
         value = (xM2[edge_index[0]] * xM2[edge_index[1]]).sum(dim=1) # (num_edges)
         # select homophily edges
@@ -267,8 +267,8 @@ def main():
         loss_d.backward()
         optimizer_d.step()
 
-        # print("Pred_y: {:.4f} | Pred_t: {:.4f} | Fool_cf: {:.4f} | Judge_cf: {:.4f}"
-        #       .format(loss_y.item(),loss_judgetreat.item(),loss_cffool.item(),loss_judgefact.item()))
+        print("Pred_y: {:.4f} | Pred_t: {:.4f} | Fool_cf: {:.4f} | Judge_cf: {:.4f}"
+              .format(loss_y.item(),loss_judgetreat.item(),loss_cffool.item(),loss_judgefact.item()))
 
 
 
@@ -279,7 +279,7 @@ def main():
             out_y1, _, out_y0, _, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                             botData_cf.x, botData_cf.edge_index,
                                                                             treat_idx_test, control_idx_test)
-
+            #print('EmbNorm all: {:.4f}'.format(pairwise_cosine_similarity(Zf[treat_idx], Zf[control_idx]).mean().item()))
             # predict the outcome and treatment
             out_y = torch.cat([out_y1, out_y0], dim=-1)
             target_y = torch.cat([botData_f.y[:, 1][treat_idx_test], botData_f.y[:, 1][control_idx_test]])
@@ -291,14 +291,13 @@ def main():
             out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
 
-            print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            #print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
-            print('MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
-            # print('EmbNorm: {:.4f}'.format(pairwise_cosine_similarity(Zf[treat_idx_ok], Zcf[control_idx_ok]).mean().item()))
-            # print('EmbNorm: {:.4f}'.format(pairwise_cosine_similarity(Zf[control_idx_ok], Zcf[treat_idx_ok]).mean().item()))
+            #print('EmbNorm ok: {:.4f} {:.4f}'.format(pairwise_cosine_similarity(Zf[treat_idx_ok], Zcf[control_idx_ok]).mean().item(),pairwise_cosine_similarity(Zf[control_idx_ok], Zcf[treat_idx_ok]).mean().item()))
             print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
-                  'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()))
+                  'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()),
+                  'MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
             print("================================")
 
 
