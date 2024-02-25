@@ -154,19 +154,25 @@ def match_node(fake_fact_graph, bot_label, prop_label, treat_idx, control_idx):
     return torch.LongTensor(treat_idx_ok), torch.LongTensor(control_idx_ok)
 
 
-def pairwise_cosine_similarity(matrix1, matrix2):
-    # 求两个矩阵每一行的模
+def pairwise_similarity(matrix1, matrix2):
     norm1 = torch.norm(matrix1, p=2, dim=1, keepdim=True)
     norm2 = torch.norm(matrix2, p=2, dim=1, keepdim=True)
-
-    # 标准化矩阵
     normalized_matrix1 = matrix1 / norm1
     normalized_matrix2 = matrix2 / norm2
-
+   
     # 计算pair-wise相似度
-    similarity_matrix = torch.mm(normalized_matrix1, normalized_matrix2.t())
-
+    #similarity_matrix = torch.mm(normalized_matrix1, normalized_matrix2.t())
+    similarity_matrix = torch.cdist(normalized_matrix1, normalized_matrix2, p=2)
     return similarity_matrix
+    
+def similarity_check(matrix1, matrix2):
+    norm1 = torch.norm(matrix1, p=2, dim=1, keepdim=True)
+    norm2 = torch.norm(matrix2, p=2, dim=1, keepdim=True)
+    normalized_matrix1 = matrix1 / norm1
+    normalized_matrix2 = matrix2 / norm2
+    dist = torch.cdist(normalized_matrix1, normalized_matrix2, p=2).mean().item()
+    cosim = torch.mm(normalized_matrix1, normalized_matrix2.t()).mean().item()
+    print('Sim_dist: {:.4f}, Sim_cos: {:.4f}'.format(dist*1000, cosim))
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
@@ -250,7 +256,7 @@ def main():
         # loss function
         loss_y = F.mse_loss(out_y.float(), target_y.float())
         #loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
-        loss_judgetreat = pairwise_cosine_similarity(Zf[treat_idx], Zf[control_idx]).mean()
+        loss_judgetreat = - pairwise_similarity(Zf[treat_idx], Zf[control_idx]).mean()
         # print("y, treat: {:.4f} {:.4f}".format(loss_y.item(), loss_judgetreat.item()))
         loss_g = loss_y*args.ly + loss_judgetreat*args.ljt + loss_cffool * args.ljf
         loss_g.backward()
@@ -260,7 +266,6 @@ def main():
         # counterfactual discriminator
         optimizer_d.zero_grad()
         fact_prob, fact_prob_cf = model_d(Zf.detach(), Zcf.detach())
-        #print("pred treat compare:", torch.mean(treat_prob[treat_idx_ok]).item(), torch.mean(treat_prob[control_idx_ok]).item())
         loss_judgefact = torch.nn.BCELoss()(torch.cat([fact_prob, fact_prob_cf], dim=0),
                                             torch.cat([torch.ones_like(fact_prob), torch.zeros_like(fact_prob_cf)], dim=0))
         loss_d = loss_judgefact * args.ljd
@@ -279,7 +284,7 @@ def main():
             out_y1, _, out_y0, _, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                             botData_cf.x, botData_cf.edge_index,
                                                                             treat_idx_test, control_idx_test)
-            #print('EmbNorm all: {:.4f}'.format(pairwise_cosine_similarity(Zf[treat_idx], Zf[control_idx]).mean().item()))
+            similarity_check(Zf[treat_idx], Zf[control_idx])
             # predict the outcome and treatment
             out_y = torch.cat([out_y1, out_y0], dim=-1)
             target_y = torch.cat([botData_f.y[:, 1][treat_idx_test], botData_f.y[:, 1][control_idx_test]])
@@ -294,7 +299,8 @@ def main():
             #print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
-            #print('EmbNorm ok: {:.4f} {:.4f}'.format(pairwise_cosine_similarity(Zf[treat_idx_ok], Zcf[control_idx_ok]).mean().item(),pairwise_cosine_similarity(Zf[control_idx_ok], Zcf[treat_idx_ok]).mean().item()))
+            similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
+            similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
             print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()),
                   'MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
