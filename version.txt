@@ -1,1 +1,5 @@
+Data Preprocessing for baidu data:
 discover_data_baidu.ipynb: data processing, sentiment analysis
+
+Data Preprocessing for twi-22:
+Dataset/twi22/dp_twi22xxx.ipynb
