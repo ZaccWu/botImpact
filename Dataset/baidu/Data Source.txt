@@ -1,5 +1,5 @@
 https://aistudio.baidu.com/projectdetail/5568552
 0=user, 1=bot
 本数据集的问题：following关系两段都有human/bot label的只有86条，无法看model evidence关系
-原因可能是degree=1的node过多（19439/24696）
+原因可能是degree=1的node过多（19439/24696）节点的平均degree太低
 如果treat/control组都是“Human opinion”，那么这个数据集显然不可行
