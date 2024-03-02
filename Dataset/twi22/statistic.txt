@@ -1,0 +1,14 @@
+topic_tweet1_covid:
+【Graph】195491 nodes, 1341914 edges
+【Degree】Ave in-degree: human 7.1490, bot 3.0872; Ave out-degree: human 6.9373, bot 5.8961
+【Follow】(A following→B) H→H：1222850，H→B：38282，B→H：76766，B→B：4016
+
+topic_tweet2_war:
+【Graph】157029 nodes, 796236 edges
+【Degree】Ave in-degree: human 5.1664, bot 2.8283; Ave out-degree: human 5.0497, bot 5.5609
+【Follow】(A following→B) H→H：743707，H→B：16750，B→H：34332，B→B：1447
+
+topic_tweet3_climate:
+【Graph】63865 nodes, 407927 edges
+【Degree】Ave in-degree: human 6.5908, bot 2.9424; Ave out-degree: human 6.4598, bot 5.1597
+【Follow】(A following→B) H→H：379925，H→B：9623，B→H：17521，B→B：858
