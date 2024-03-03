@@ -2,13 +2,22 @@ topic_tweet1_covid:
 【Graph】195491 nodes, 1341914 edges
 【Degree】Ave in-degree: human 7.1490, bot 3.0872; Ave out-degree: human 6.9373, bot 5.8961
 【Follow】(A following→B) H→H：1222850，H→B：38282，B→H：76766，B→B：4016
++Location
+【A→B, AveHomo(A,B)】H→H：0.6042，H→B：0.5652；t=6.7031，p=2.0720*1e-11
+【A→B, AveHomo(Bs)】H→H：0.8210，B→H：0.7423；t=23.8577，p=1.9553*1e-124
 
 topic_tweet2_war:
 【Graph】157029 nodes, 796236 edges
 【Degree】Ave in-degree: human 5.1664, bot 2.8283; Ave out-degree: human 5.0497, bot 5.5609
 【Follow】(A following→B) H→H：743707，H→B：16750，B→H：34332，B→B：1447
++Location
+【A→B, AveHomo(A,B)】H→H：0.5801，H→B：0.5534；t=2.8894，p=0.0039
+【A→B, AveHomo(Bs)】H→H：0.8395，B→H：0.7353；t=20.5134，p=6.0699*1e-92
 
 topic_tweet3_climate:
 【Graph】63865 nodes, 407927 edges
 【Degree】Ave in-degree: human 6.5908, bot 2.9424; Ave out-degree: human 6.4598, bot 5.1597
 【Follow】(A following→B) H→H：379925，H→B：9623，B→H：17521，B→B：858
++Location
+【A→B, AveHomo(A,B)】H→H：0.5393，H→B：0.5214；t=1.6584，p=0.0973
+【A→B, AveHomo(Bs)】H→H：0.7854，B→H：0.6761；t=16.6014，p=8.0444*1e-61
