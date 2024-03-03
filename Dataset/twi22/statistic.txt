@@ -3,7 +3,7 @@ topic_tweet1_covid:
 【Degree】Ave in-degree: human 7.1490, bot 3.0872; Ave out-degree: human 6.9373, bot 5.8961
 【Follow】(A following→B) H→H：1222850，H→B：38282，B→H：76766，B→B：4016
 +Location
-【A→B, AveHomo(A,B)】H→H：0.6042，H→B：0.5652；t=6.7031，p=2.0720*1e-11
+【A→B, AveHomo(A,B)】H→H：0.6042，H→B：0.5652；t=6.7031，p=2.0720*1e-11（Human喜欢连接相似的人，但是对Bot，可能更多是获取信息等，或者bot主动连，Human反连）
 【A→B, AveHomo(Bs)】H→H：0.8210，B→H：0.7423；t=23.8577，p=1.9553*1e-124
 
 topic_tweet2_war:
