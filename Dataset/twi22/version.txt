@@ -1,0 +1,16 @@
+For data preprocessing
+（1）dp01_twi22origin_to_tweetcsv.ipynb:
+提取user id及其对应推文（平均88条）
+output：tweetsX.csv
+（2）dp02_twi22explore_hashtag.ipynb: 
+统计推文里出现的hashtag数量
+output：hashtag_tweetX.csv
+（3）dp03_twi22select_topic_tweet.ipynb:
+选择在某特定主题hashtag下的推子及其对应用户
+output：topic_tweetX_nnn.csv
+（4）dp04_twi22analyze_edge.ipynb
+基于选择的用户，保留对应网络结构，并进行简单的结构分析
+
+For model free evidence
+（1）dp21_twi22user_ego.ipynb
+根据用户的location（作为trait）分析human和bot周围的trait是否asymmetric
