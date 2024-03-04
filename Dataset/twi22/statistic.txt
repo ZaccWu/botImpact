@@ -19,5 +19,5 @@ topic_tweet3_climate:
 【Degree】Ave in-degree: human 6.5908, bot 2.9424; Ave out-degree: human 6.4598, bot 5.1597
 【Follow】(A following→B) H→H：379925，H→B：9623，B→H：17521，B→B：858
 +Location
-【A→B, AveHomo(A,B)】H→H：0.5393，H→B：0.5214；t=1.6584，p=0.0973
+【A→B, AveHomo(A,B)】H→H：0.5393，H→B：0.5214；t=1.9854，p=0.0376
 【A→B, AveHomo(Bs)】H→H：0.7854，B→H：0.6761；t=16.6014，p=8.0444*1e-61
