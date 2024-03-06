@@ -9,8 +9,13 @@ output：hashtag_tweetX.csv
 选择在某特定主题hashtag下的推子及其对应用户
 output：topic_tweetX_nnn.csv
 （4）dp04_twi22analyze_edge.ipynb
-基于选择的用户，保留对应网络结构，并进行简单的结构分析
+基于选择的用户，保留对应网络结构，并进行简单的结构分析（输出topic_tweetX_xxx.pkl的networkx网络）
+基于vaderSentiment提取观点（输出topic_tweetX_xxx_score.csv观点分数）
+（5）dp05_twi22raw_to_traindt.ipynb
+将networkx网络、观点分数输入，输出算法适用的输入数据（文件夹内：edge，treat_label, bot_label, y, prop_label）
 
 For model free evidence
 （1）dp21_twi22user_ego.ipynb
-根据用户的location（作为trait）分析human和bot周围的trait是否asymmetric
+根据用户的location（作为trait）分析human和bot周围的trait是否asymmetric（统计检验）
+（2）dp22_twi22vis_homo.ipynb
+location作为trait，提供一些asymmetric的可视化
