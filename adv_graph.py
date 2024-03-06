@@ -186,19 +186,20 @@ def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
 
 def load_data(dt):
     # load train data
-    edge_index_train = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
-    bot_label_train = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_bot_label.npy')
-    T_train = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_T_label.npy')
-    outcome_train = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_y.npy')
+    edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
+    bot_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_bot_label.npy')
+    treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_T_label.npy')
+    outcome = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_y.npy')
     prop_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_prop_label.npy')
-    N = len(outcome_train)  # num of nodes
-    x = degree(edge_index_train[:, 0])  # user node degree as feature
-    #x = torch.eye(N)
+
+    # cal basic
+    N = len(outcome)  # num of nodes
+    x = degree(edge_index[:, 0])  # user node degree as feature
 
     # target: bot&human, opinion, treat&control
     target_var = torch.tensor(
-        np.concatenate([bot_label_train[:, np.newaxis], outcome_train[:, np.newaxis], T_train[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
-    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index_train.t().contiguous(), y=target_var).to(device)
+        np.concatenate([bot_label[:, np.newaxis], outcome[:, np.newaxis], treat_indicator[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
+    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var).to(device)
     return botData, N, prop_label
 
 def main():
@@ -299,8 +300,8 @@ def main():
             #print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
-            similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
-            similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
+            #similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
+            #similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
             print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()),
                   'MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
