@@ -23,7 +23,8 @@ parser.add_argument('--type', type=str, help='data used', default='random')
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
 # training parameters
-parser.add_argument('--seed', type=int, help='random seed', default=101)
+
+parser.add_argument('--epoch', type=int, help='num epochs', default=300)
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
 parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1)
 parser.add_argument('--ljt', type=float, help='reg for treat pred', default=1)
@@ -37,12 +38,14 @@ except:
     sys.exit(0)
 
 device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() else 'cpu')
-random.seed(args.seed)
-np.random.seed(args.seed)
-torch.manual_seed(args.seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
 
 class MaskEncoder(torch.nn.Module):
@@ -222,8 +225,10 @@ def main():
     treat_idx_train, control_idx_train = treat_idx[treat_rd_idx[:Ntreat_train]], control_idx[control_rd_idx[:Ncontrol_train]]
     treat_idx_test, control_idx_test = treat_idx[treat_rd_idx[Ntreat_train:]], control_idx[control_rd_idx[Ncontrol_train:]]
 
+    # for training record
+    r_y, r_jt, r_cffool, r_jf = 0, 0, 0, 0
     # train
-    for epoch in range(300):
+    for epoch in range(args.epoch):
         model_f.train()
         model_g.train()
         model_d.train()
@@ -257,9 +262,9 @@ def main():
         # loss function
         loss_y = F.mse_loss(out_y.float(), target_y.float())
         #loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
-        loss_judgetreat = - pairwise_similarity(Zf[treat_idx], Zf[control_idx]).mean()
+        loss_jt = - pairwise_similarity(Zf[treat_idx], Zf[control_idx]).mean()
         # print("y, treat: {:.4f} {:.4f}".format(loss_y.item(), loss_judgetreat.item()))
-        loss_g = loss_y*args.ly + loss_judgetreat*args.ljt + loss_cffool * args.ljf
+        loss_g = loss_y*args.ly + loss_jt*args.ljt + loss_cffool * args.ljf
         loss_g.backward()
         optimizer_fg.step()
 
@@ -267,18 +272,17 @@ def main():
         # counterfactual discriminator
         optimizer_d.zero_grad()
         fact_prob, fact_prob_cf = model_d(Zf.detach(), Zcf.detach())
-        loss_judgefact = torch.nn.BCELoss()(torch.cat([fact_prob, fact_prob_cf], dim=0),
+        loss_jf = torch.nn.BCELoss()(torch.cat([fact_prob, fact_prob_cf], dim=0),
                                             torch.cat([torch.ones_like(fact_prob), torch.zeros_like(fact_prob_cf)], dim=0))
-        loss_d = loss_judgefact * args.ljd
+        loss_d = loss_jf * args.ljd
         loss_d.backward()
         optimizer_d.step()
 
-        print("Pred_y: {:.4f} | Pred_t: {:.4f} | Fool_cf: {:.4f} | Judge_cf: {:.4f}"
-              .format(loss_y.item(),loss_judgetreat.item(),loss_cffool.item(),loss_judgefact.item()))
-
-
+        r_cffool, r_jf = r_cffool+loss_cffool.item(), r_jf+loss_jf.item()
 
         if epoch%10 == 0:
+
+
             model_g.eval()
             # evaluation for training stop
             # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
@@ -307,6 +311,21 @@ def main():
                   'MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
             print("================================")
 
+            res['Epoch'].append(epoch)
+            res['eATE'].append(eATE_test.detach().cpu().numpy())
+            res['ePEHE'].append(ePEHE_test.detach().cpu().numpy())
+            res['lcff'].append(np.mean(r_cffool))
+            res['rjf'].append(np.mean(r_jf))
+            res['ly'].append(outcome_MSE.detach().cpu().numpy())
+
+            r_cffool, r_jf = 0, 0
+
 
 if __name__ == "__main__":
-    main()
+    for seed in (101, 111):
+        set_seed(seed)
+        res = {'Epoch': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
+        main()
+        res = pd.DataFrame(res)
+        res.to_csv('result/adv_'+str(seed)+'.csv', index=False)
+
