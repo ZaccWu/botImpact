@@ -19,7 +19,7 @@ parser = argparse.ArgumentParser('BotImpact')
 
 
 # data parameters
-parser.add_argument('--type', type=str, help='data used', default='t2')
+parser.add_argument('--type', type=str, help='data used', default='t1_pos')
 parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
@@ -57,13 +57,13 @@ def load_data(dt='train'):
         outcome = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_y.npy')
         prop_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_prop_label.npy')
 
-    elif args.type in ['t1', 't2', 't3']:
+    elif args.type in ['t1_pos', 't2_pos', 't3_pos', 't1_neg', 't2_neg', 't3_neg']:
         # load train data
-        edge_index = torch.LongTensor(np.load('Dataset/twi22/'+args.type+'/'+args.type+'_edge.npy'))    # (num_edge, 2)
-        bot_label = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_bot_label.npy')
-        treat_indicator = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_T_label.npy')
-        outcome = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_y.npy')
-        prop_label = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_prop_label.npy')
+        edge_index = torch.LongTensor(np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_edge.npy'))    # (num_edge, 2)
+        bot_label = np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_bot_label.npy')
+        treat_indicator = np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_T_label.npy')
+        outcome = np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_y.npy')
+        prop_label = np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_prop_label.npy')
 
     # cal basic
     N = len(outcome)  # num of nodes
