@@ -19,7 +19,8 @@ parser = argparse.ArgumentParser('BotImpact')
 
 
 # data parameters
-parser.add_argument('--type', type=str, help='data used', default='random')
+parser.add_argument('--type', type=str, help='data used', default='t2')
+parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
 # training parameters
@@ -28,7 +29,7 @@ parser.add_argument('--epoch', type=int, help='num epochs', default=300)
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
 parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1)
 parser.add_argument('--ljt', type=float, help='reg for treat pred', default=1)
-parser.add_argument('--ljf', type=float, help='reg for cf generate', default=1)
+parser.add_argument('--ljg', type=float, help='reg for cf generate', default=1)
 parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1)
 
 try:
@@ -46,6 +47,33 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+
+def load_data(dt='train'):
+    if args.type in ['random', 'randomu', 'highbc', 'highcc', 'lowdu', 'highdu']:
+        # load train data
+        edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
+        bot_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_bot_label.npy')
+        treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_T_label.npy')
+        outcome = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_y.npy')
+        prop_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_prop_label.npy')
+
+    elif args.type in ['t1', 't2', 't3']:
+        # load train data
+        edge_index = torch.LongTensor(np.load('Dataset/twi22/'+args.type+'/'+args.type+'_edge.npy'))    # (num_edge, 2)
+        bot_label = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_bot_label.npy')
+        treat_indicator = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_T_label.npy')
+        outcome = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_y.npy')
+        prop_label = np.load('Dataset/twi22/'+args.type+'/'+args.type+'_prop_label.npy')
+
+    # cal basic
+    N = len(outcome)  # num of nodes
+    #x = degree(edge_index[:, 0])  # user node degree as feature
+    x = torch.FloatTensor(bot_label)
+    # target: bot&human, opinion, treat&control
+    target_var = torch.tensor(
+        np.concatenate([bot_label[:, np.newaxis], outcome[:, np.newaxis], treat_indicator[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
+    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var).to(device)
+    return botData, N, prop_label
 
 
 class MaskEncoder(torch.nn.Module):
@@ -122,13 +150,12 @@ def recon_loss(z, edge_tar, neg_edge_tar):
 						  EPS).mean()
 	return pos_loss + neg_loss
 
-def generate_counterfactual_edge(edge_pool, var_edge_index, inv_edge_index):
-    # iput edge_index: (2, num_edge)
-    inv_edge_pool = set(map(tuple, np.array(inv_edge_index.T.cpu())))
-    var_edge_pool = set(map(tuple, np.array(var_edge_index.T.cpu())))
-    selected_edge = random.sample(edge_pool - inv_edge_pool - var_edge_pool, int(len(inv_edge_pool)/2))
-    selected_edge = torch.LongTensor(list(map(list, selected_edge)))
-    selected_edge = torch.cat([selected_edge,torch.flip(selected_edge,[1])],dim=0)
+def generate_counterfactual_edge2(N, N_var_edge, inv_edge_index):
+    id_seq = [i for i in range(N)]
+    follower = random.choices(id_seq, k=N_var_edge)
+    following = random.choices(id_seq, k=N_var_edge)
+
+    selected_edge = torch.cat([torch.LongTensor(follower).unsqueeze(-1),torch.LongTensor(following).unsqueeze(-1)],dim=-1)
     new_edge_index = torch.cat([inv_edge_index, selected_edge.T.to(device)], dim=1)
     return new_edge_index
 
@@ -160,8 +187,8 @@ def match_node(fake_fact_graph, bot_label, prop_label, treat_idx, control_idx):
 def pairwise_similarity(matrix1, matrix2):
     norm1 = torch.norm(matrix1, p=2, dim=1, keepdim=True)
     norm2 = torch.norm(matrix2, p=2, dim=1, keepdim=True)
-    normalized_matrix1 = matrix1 / norm1
-    normalized_matrix2 = matrix2 / norm2
+    normalized_matrix1 = matrix1 / (norm1+EPS)
+    normalized_matrix2 = matrix2 / (norm2+EPS)
    
     # 计算pair-wise相似度
     #similarity_matrix = torch.mm(normalized_matrix1, normalized_matrix2.t())
@@ -182,31 +209,14 @@ def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     print("pred_0: {:.4f}  pred_1: {:.4f}".format(torch.mean(pred_0).item(), torch.mean(pred_1).item()))
     print("pred_c0: {:.4f}  pred_c1: {:.4f}".format(torch.mean(pred_c0).item(), torch.mean(pred_c1).item()))
     print("--------------------------------")
-    tau_true = torch.ones(tau_pred.shape).to(device) * -1
+    tau_true = torch.ones(tau_pred.shape).to(device) * args.effect_true
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
     return eATE, ePEHE
 
-def load_data(dt):
-    # load train data
-    edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
-    bot_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_bot_label.npy')
-    treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_T_label.npy')
-    outcome = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_y.npy')
-    prop_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_prop_label.npy')
-
-    # cal basic
-    N = len(outcome)  # num of nodes
-    x = degree(edge_index[:, 0])  # user node degree as feature
-
-    # target: bot&human, opinion, treat&control
-    target_var = torch.tensor(
-        np.concatenate([bot_label[:, np.newaxis], outcome[:, np.newaxis], treat_indicator[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
-    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var).to(device)
-    return botData, N, prop_label
-
 def main():
     botData_f, N_train, prop_label_train = load_data('train')
+    print("Finish loading data.")
     model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=32).to(device)
     model_g = BotImpact(in_dim=1, h_dim=32, out_dim=1).to(device)
     model_d = Discriminator(h_dim=32).to(device)
@@ -216,14 +226,16 @@ def main():
     optimizer_d = torch.optim.Adam(model_d.parameters(), lr=0.001)
 
     # for counterfactual edge generation
-    edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
-    treat_idx, control_idx = torch.where(botData_f.y[:, 2]==-1)[0], torch.where(botData_f.y[:, 2]==1)[0]
+    # edge_pool_train = set(map(tuple, np.array([[i, j] for i in range(N_train) for j in range(i, N_train)])))
+    #treat_idx, control_idx = torch.where(botData_f.y[:, 2]==-1)[0], torch.where(botData_f.y[:, 2]==1)[0]
+    treat_idx, control_idx = torch.nonzero(botData_f.y[:, 2] == -1).squeeze(), torch.nonzero(botData_f.y[:, 2] == 1).squeeze()
 
     # 划分train-val (outcome mask)
     treat_rd_idx, control_rd_idx = torch.randperm(treat_idx.size(0)), torch.randperm(control_idx.size(0))
     Ntreat_train, Ncontrol_train = int(treat_idx.size(0) * 0.5), int(control_idx.size(0) * 0.5)
     treat_idx_train, control_idx_train = treat_idx[treat_rd_idx[:Ntreat_train]], control_idx[control_rd_idx[:Ncontrol_train]]
     treat_idx_test, control_idx_test = treat_idx[treat_rd_idx[Ntreat_train:]], control_idx[control_rd_idx[Ncontrol_train:]]
+    print("Preparing for training...")
 
     # for training record
     r_y, r_jt, r_cffool, r_jf = 0, 0, 0, 0
@@ -236,10 +248,10 @@ def main():
         # mask encoder
         optimizer_fg.zero_grad()
         homo_edge_index, hetero_edge_index, Z_f = model_f(botData_f.x, botData_f.edge_index)
+        N_homo_edge, N_hetero_edge = homo_edge_index.shape[-1], hetero_edge_index.shape[-1]
 
         # counterfactual graph generation
-        cfgraph_edge = generate_counterfactual_edge(edge_pool_train, var_edge_index=homo_edge_index,
-                                                       inv_edge_index=hetero_edge_index) # for effect estimation
+        cfgraph_edge = generate_counterfactual_edge2(N_train, N_homo_edge, hetero_edge_index) # for effect estimation
         botData_cf = Data(x=botData_f.x, edge_index=cfgraph_edge.contiguous(), y=botData_f.y).to(device)
         #print("treat/control: ", treat_idx_train.shape, control_idx_train.shape)
         # assess bot
@@ -263,11 +275,10 @@ def main():
         loss_y = F.mse_loss(out_y.float(), target_y.float())
         #loss_judgetreat = torch.nn.CrossEntropyLoss()(out_judgetreat, target_judgetreat.long())
         loss_jt = - pairwise_similarity(Zf[treat_idx], Zf[control_idx]).mean()
-        # print("y, treat: {:.4f} {:.4f}".format(loss_y.item(), loss_judgetreat.item()))
-        loss_g = loss_y*args.ly + loss_jt*args.ljt + loss_cffool * args.ljf
+
+        loss_g = loss_y*args.ly + loss_jt*args.ljt + loss_cffool * args.ljg
         loss_g.backward()
         optimizer_fg.step()
-
 
         # counterfactual discriminator
         optimizer_d.zero_grad()
@@ -277,6 +288,9 @@ def main():
         loss_d = loss_jf * args.ljd
         loss_d.backward()
         optimizer_d.step()
+
+        print("ly, ljt, lcff, ljf: {:.4f} {:.4f} {:.4f} {:.4f}".format(loss_y.item(), loss_jt.item(),
+                                                                       loss_cffool.item(), loss_jf.item()))
 
         r_cffool, r_jf = r_cffool+loss_cffool.item(), r_jf+loss_jf.item()
 
@@ -289,7 +303,6 @@ def main():
             out_y1, _, out_y0, _, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                             botData_cf.x, botData_cf.edge_index,
                                                                             treat_idx_test, control_idx_test)
-            similarity_check(Zf[treat_idx], Zf[control_idx])
             # predict the outcome and treatment
             out_y = torch.cat([out_y1, out_y0], dim=-1)
             target_y = torch.cat([botData_f.y[:, 1][treat_idx_test], botData_f.y[:, 1][control_idx_test]])
@@ -301,7 +314,7 @@ def main():
             out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
 
-            #print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
             #similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
