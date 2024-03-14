@@ -8,7 +8,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 check_model = 'cne-'
 check_type = 't1_pos'
 
-MSE_LASSO, MSE_RF, MSE_XGB, MAE_LASSO, MAE_RF, MAE_XGB = [], [], [], [], [], []
+RMSE_LASSO, RMSE_RF, RMSE_XGB, MAE_LASSO, MAE_RF, MAE_XGB = [], [], [], [], [], []
 
 for seed in range(101,111):
     # Z_emb, treat_lb, y_tar
@@ -28,14 +28,14 @@ for seed in range(101,111):
     xgb_model.fit(X_train, y_train)
     y_pred_xgb = xgb_model.predict(X_test)
 
-    mse_lasso = mean_squared_error(y_test, y_pred_lasso)
-    mse_rf = mean_squared_error(y_test, y_pred_rf)
-    mse_xgb = mean_squared_error(y_test, y_pred_xgb)
+    rmse_lasso = np.sqrt(mean_squared_error(y_test, y_pred_lasso))
+    rmse_rf = np.sqrt(mean_squared_error(y_test, y_pred_rf))
+    rmse_xgb = np.sqrt(mean_squared_error(y_test, y_pred_xgb))
     print("MSE in seed ", seed)
-    print("Lasso: {:.4f}, RF: {:.4f}, XGB: {:.4f}".format(mse_lasso, mse_rf, mse_xgb))
-    MSE_LASSO.append(mse_lasso)
-    MSE_RF.append(mse_rf)
-    MSE_XGB.append(mse_xgb)
+    print("Lasso: {:.4f}, RF: {:.4f}, XGB: {:.4f}".format(rmse_lasso, rmse_rf, rmse_xgb))
+    RMSE_LASSO.append(rmse_lasso)
+    RMSE_RF.append(rmse_rf)
+    RMSE_XGB.append(rmse_xgb)
 
     mae_lasso = mean_absolute_error(y_test, y_pred_lasso)
     mae_rf = mean_absolute_error(y_test, y_pred_rf)
@@ -48,8 +48,8 @@ for seed in range(101,111):
 
 print("-------------------------------------")
 print("Result in ", check_type, " for model ", check_model)
-print("10 Ave MSE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(MSE_LASSO), np.mean(MSE_RF), np.mean(MSE_XGB)))
-print("Std        | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(MSE_LASSO), np.std(MSE_RF), np.std(MSE_XGB)))
+print("10 Ave MSE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(RMSE_LASSO), np.mean(RMSE_RF), np.mean(RMSE_XGB)))
+print("Std        | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(RMSE_LASSO), np.std(RMSE_RF), np.std(RMSE_XGB)))
 
 print("10 Ave MAE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(MAE_LASSO), np.mean(MAE_RF), np.mean(MAE_XGB)))
-print("Std        | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(MSE_LASSO), np.std(MSE_RF), np.std(MSE_XGB)))
+print("Std        | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(MAE_LASSO), np.std(MAE_RF), np.std(MAE_XGB)))
