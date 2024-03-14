@@ -42,7 +42,7 @@ class CNE_Minus(torch.nn.Module):
         y0, yc1 = self.yNet0(xZ2[control_idx]), self.yNet1(xZ2[control_idx])   # yc1: 如果没bot的node周围有bot会怎么样
         # judge the node is treated or controled
         tprob = self.propenNet(xZ2)
-        return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), tprob.squeeze(-1)
+        return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), tprob.squeeze(-1), xZ2
 
 # Ignite
 class IgniteGenerator(torch.nn.Module):

@@ -19,7 +19,7 @@ EPS = 1e-15
 parser = argparse.ArgumentParser('BotImpact')
 
 # data parameters
-parser.add_argument('--type', type=str, help='data used', default='t1_pos')
+parser.add_argument('--type', type=str, help='data used', default='random')
 parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
@@ -154,8 +154,8 @@ def generate_counterfactual_edge2(N, N_var_edge, inv_edge_index):
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    print("pred_0: {:.4f}  pred_1: {:.4f}".format(torch.mean(pred_0).item(), torch.mean(pred_1).item()))
-    print("pred_c0: {:.4f}  pred_c1: {:.4f}".format(torch.mean(pred_c0).item(), torch.mean(pred_c1).item()))
+    print("treat ave: {:.4f}".format(torch.mean(torch.cat([pred_0, pred_c0])).item()))
+    print("control ave: {:.4f}".format(torch.mean(torch.cat([pred_0, pred_c0])).item()))
     print("--------------------------------")
     tau_true = torch.ones(tau_pred.shape).to(device) * args.effect_true
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
@@ -274,16 +274,17 @@ def main():
 
             # save embedding
             if epoch == args.save_epoch:
-                Z_emb, treat_lb = Zf.detach().cpu().numpy(), botData_f.y[:, 2].detach().cpu().numpy()
+                Z_emb, treat_lb, y_tar = Zf.detach().cpu().numpy(), botData_f.y[:, 2].detach().cpu().numpy(), botData_f.y[:, 1].detach().cpu().numpy()
                 if args.save:
                     savedt_path = 'result/save_emb/'+args.type+'/'
                     if not os.path.isdir(savedt_path):
                         os.makedirs(savedt_path)
-                    np.save(savedt_path + 'AdvG'+str(seed)+'.npy', np.concatenate([Z_emb,treat_lb], axis=-1)) # emb_H + treat (dim: z+1)
+                    # emb_H + treat + y
+                    np.save(savedt_path + 'AdvG'+str(seed)+'.npy', np.concatenate([Z_emb,treat_lb[:,np.newaxis],y_tar[:,np.newaxis]], axis=-1))
 
 
 if __name__ == "__main__":
-    for seed in (101, 111):
+    for seed in range(101, 111):
         set_seed(seed)
         res = {'Epoch': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
         main()

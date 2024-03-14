@@ -7,7 +7,8 @@ Dataset/twi22/dp_twi22xxx.ipynb
 Main content:
 adv_graph.py: proposed model
 until.py: some reusable component
-
+bs_train.py: 跑baseline model的训练
+baseline_model.py：各类baseline model的架构
 
 synthetic.py: generate synthetic data
 empirical.ipynb: analysis of opinions in twi-22, Naive approach for estimation
