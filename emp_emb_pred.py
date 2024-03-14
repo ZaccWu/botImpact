@@ -31,7 +31,7 @@ for seed in range(101,111):
     rmse_lasso = np.sqrt(mean_squared_error(y_test, y_pred_lasso))
     rmse_rf = np.sqrt(mean_squared_error(y_test, y_pred_rf))
     rmse_xgb = np.sqrt(mean_squared_error(y_test, y_pred_xgb))
-    print("MSE in seed ", seed)
+    print("RMSE in seed ", seed)
     print("Lasso: {:.4f}, RF: {:.4f}, XGB: {:.4f}".format(rmse_lasso, rmse_rf, rmse_xgb))
     RMSE_LASSO.append(rmse_lasso)
     RMSE_RF.append(rmse_rf)
@@ -48,8 +48,8 @@ for seed in range(101,111):
 
 print("-------------------------------------")
 print("Result in ", check_type, " for model ", check_model)
-print("10 Ave MSE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(RMSE_LASSO), np.mean(RMSE_RF), np.mean(RMSE_XGB)))
-print("Std        | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(RMSE_LASSO), np.std(RMSE_RF), np.std(RMSE_XGB)))
+print("10 Ave RMSE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(RMSE_LASSO), np.mean(RMSE_RF), np.mean(RMSE_XGB)))
+print("Std         | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(RMSE_LASSO), np.std(RMSE_RF), np.std(RMSE_XGB)))
 
-print("10 Ave MAE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(MAE_LASSO), np.mean(MAE_RF), np.mean(MAE_XGB)))
-print("Std        | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(MAE_LASSO), np.std(MAE_RF), np.std(MAE_XGB)))
+print("10 Ave MAE  | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(MAE_LASSO), np.mean(MAE_RF), np.mean(MAE_XGB)))
+print("Std         | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(MAE_LASSO), np.std(MAE_RF), np.std(MAE_XGB)))
