@@ -212,7 +212,8 @@ def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_true = torch.ones(tau_pred.shape).to(device) * args.effect_true
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
-    return eATE, ePEHE
+    Treat_eff = torch.mean(tau_pred)
+    return eATE, ePEHE, Treat_eff
 
 def main():
     botData_f, N_train, prop_label_train = load_data('train')
@@ -315,13 +316,13 @@ def main():
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
 
             print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
-            eATE_test, ePEHE_test = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
+            eATE_test, ePEHE_test, treat_eff = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
             #similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
             #similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
             print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
                   'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()),
-                  'MSE_val: {:.4f}'.format(outcome_MSE.detach().cpu().numpy()))
+                  'Effect: {:.4f}'.format(treat_eff.detach().cpu().numpy()))
             print("================================")
 
             res['Epoch'].append(epoch)
