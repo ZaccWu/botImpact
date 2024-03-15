@@ -5,8 +5,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-check_model = 'cne-'
-check_type = 't1_pos'
+check_model = 'cne-' # AdvG, cne-, ignite, gial
+check_type = 't1_pos' # t1_pos, t2_pos, t3_pos
 
 RMSE_LASSO, RMSE_RF, RMSE_XGB, MAE_LASSO, MAE_RF, MAE_XGB = [], [], [], [], [], []
 
@@ -16,15 +16,15 @@ for seed in range(101,111):
     X, y = emb[:,:-1], emb[:,-1]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, shuffle=True)
 
-    lasso_model = Lasso(alpha=0.1, random_state=42)
+    lasso_model = Lasso(alpha=0.2, random_state=42)
     lasso_model.fit(X_train, y_train)
     y_pred_lasso = lasso_model.predict(X_test)
 
-    rf_model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
+    rf_model = RandomForestRegressor(n_estimators=200, max_depth=5, random_state=42)
     rf_model.fit(X_train, y_train)
     y_pred_rf = rf_model.predict(X_test)
 
-    xgb_model = xgb.XGBRegressor(n_estimators=100, max_depth=3, random_state=42)
+    xgb_model = xgb.XGBRegressor(n_estimators=50, max_depth=5, random_state=42)
     xgb_model.fit(X_train, y_train)
     y_pred_xgb = xgb_model.predict(X_test)
 
@@ -49,7 +49,7 @@ for seed in range(101,111):
 print("-------------------------------------")
 print("Result in ", check_type, " for model ", check_model)
 print("10 Ave RMSE | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(RMSE_LASSO), np.mean(RMSE_RF), np.mean(RMSE_XGB)))
-print("Std         | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(RMSE_LASSO), np.std(RMSE_RF), np.std(RMSE_XGB)))
+print("Std         |        ({:.4f}),     ({:.4f}),      ({:.4f})".format(np.std(RMSE_LASSO), np.std(RMSE_RF), np.std(RMSE_XGB)))
 
 print("10 Ave MAE  | Lasso:  {:.4f},  RF:  {:.4f},  XGB:  {:.4f}".format(np.mean(MAE_LASSO), np.mean(MAE_RF), np.mean(MAE_XGB)))
-print("Std         | Lasso: ({:.4f}), RF: ({:.4f}), XGB: ({:.4f})".format(np.std(MAE_LASSO), np.std(MAE_RF), np.std(MAE_XGB)))
+print("Std         |        ({:.4f}),     ({:.4f}),      ({:.4f})".format(np.std(MAE_LASSO), np.std(MAE_RF), np.std(MAE_XGB)))
