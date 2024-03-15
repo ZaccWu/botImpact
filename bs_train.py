@@ -231,8 +231,7 @@ def main():
             print("================================")
             # save embedding
             if epoch == args.save_epoch:
-                Z_emb, bot_lb, treat_lb, y_tar = z.detach().cpu().numpy(), botData_f.y[:, 0].detach().cpu().numpy(), \
-                                                 botData_f.y[:, 2].detach().cpu().numpy(), botData_f.y[:, 1].detach().cpu().numpy()
+                Z_emb, treat_lb, y_tar = z.detach().cpu().numpy(), botData_f.y[:, 2].detach().cpu().numpy(), botData_f.y[:, 1].detach().cpu().numpy()
                 if args.save:
                     savedt_path = 'result/save_emb/'+args.type+'/'
                     if not os.path.isdir(savedt_path):
