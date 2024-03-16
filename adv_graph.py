@@ -154,7 +154,7 @@ def generate_counterfactual_edge2(N, N_var_edge, inv_edge_index):
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    print("treat ave: {:.4f}".format(torch.mean(torch.cat([pred_0, pred_c0])).item()))
+    print("treat ave: {:.4f}".format(torch.mean(torch.cat([pred_1, pred_c1])).item()))
     print("control ave: {:.4f}".format(torch.mean(torch.cat([pred_0, pred_c0])).item()))
     print("--------------------------------")
     tau_true = torch.ones(tau_pred.shape).to(device) * args.effect_true
