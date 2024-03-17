@@ -19,7 +19,7 @@ EPS = 1e-15
 parser = argparse.ArgumentParser('BotImpact')
 
 # data parameters
-parser.add_argument('--type', type=str, help='data used', default='random')
+parser.add_argument('--type', type=str, help='data used', default='t1_pos')
 parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
@@ -154,14 +154,16 @@ def generate_counterfactual_edge2(N, N_var_edge, inv_edge_index):
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    print("treat ave: {:.4f}".format(torch.mean(torch.cat([pred_1, pred_c1])).item()))
-    print("control ave: {:.4f}".format(torch.mean(torch.cat([pred_0, pred_c0])).item()))
+    ave_treat = torch.mean(torch.cat([pred_1, pred_c1])).item()
+    ave_control = torch.mean(torch.cat([pred_0, pred_c0])).item()
+    print("treat ave: {:.4f}".format(ave_treat))
+    print("control ave: {:.4f}".format(ave_control))
     print("--------------------------------")
     tau_true = torch.ones(tau_pred.shape).to(device) * args.effect_true
     ePEHE = torch.sqrt(torch.mean(torch.square(tau_pred-tau_true)))
     eATE = torch.abs(torch.mean(tau_pred) - torch.mean(tau_true))
     Treat_eff = torch.mean(tau_pred)
-    return eATE, ePEHE, Treat_eff
+    return eATE, ePEHE, Treat_eff, ave_treat, ave_control
 
 def main():
     botData_f, N_train, prop_label_train = load_data('train')
@@ -254,7 +256,7 @@ def main():
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
 
             print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
-            eATE_test, ePEHE_test, treat_eff = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
+            eATE_test, ePEHE_test, treat_eff, ave_treat, ave_control = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch))
             #similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
             #similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
@@ -264,6 +266,8 @@ def main():
             print("================================")
 
             res['Epoch'].append(epoch)
+            res['aveT'].append(ave_treat)
+            res['aveC'].append(ave_control)
             res['eATE'].append(eATE_test.detach().cpu().numpy())
             res['ePEHE'].append(ePEHE_test.detach().cpu().numpy())
             res['lcff'].append(np.mean(r_cffool))
@@ -286,8 +290,8 @@ def main():
 if __name__ == "__main__":
     for seed in range(101, 111):
         set_seed(seed)
-        res = {'Epoch': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
+        res = {'Epoch': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
         main()
         res = pd.DataFrame(res)
-        res.to_csv('result/AdvG_'+str(seed)+'.csv', index=False)
+        res.to_csv('result/AdvG_'+args.type+str(seed)+'.csv', index=False)
 

@@ -7,6 +7,7 @@ import networkx as nx
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score, average_precision_score
 from torch_geometric.nn import GCNConv
+
 EPS = 1e-15
 
 
@@ -26,6 +27,17 @@ class SimpleGCN(torch.nn.Module):
 		emb_out = self.act(self.conv2(x_1, edge_index))
 		return emb_out
 
+class SallowEmb(torch.nn.Module):
+	def __init__(self, node_size, z_dim):
+		super().__init__()
+		# Structural Encoder (Separate F+N)
+		self.N = node_size
+		self.training = True
+		self.embedding = torch.nn.Embedding(node_size, z_dim)
+		self.act = torch.nn.LeakyReLU()
+	def forward(self, all_id):
+		emb_out = self.act(self.embedding(all_id))
+		return emb_out
 
 class InnerProductDecoder(torch.nn.Module):
 	def forward(self, z, edge_index, sigmoid=True):
@@ -101,18 +113,20 @@ def train():
 
     edgeH_pos, edgeB_pos = torch.LongTensor(edgeH_pos).t(), torch.LongTensor(edgeB_pos).t()
     #print(train_edge.edge_index.shape, edgeH_pos.shape, edgeB_pos.shape)
-
+    all_node_id = torch.LongTensor([i for i in range(len(bot_label))])
 
     model = SimpleGCN(in_dim=1, z_dim=32)
+    #model = SallowEmb(node_size=len(bot_label), z_dim=32)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    for epoch in range(100):
+    for epoch in range(200):
         model.train()
         model.training = True
         optimizer.zero_grad()
         pos_edge, neg_edge = train_edge.edge_label_index[:, train_edge.edge_label.nonzero()].squeeze(-1), \
                              train_edge.edge_label_index[:, (1 - train_edge.edge_label).nonzero()].squeeze(-1)
-        emb_out = model(botData.x, pos_edge)  # semi-supervised
+        emb_out = model(botData.x, pos_edge)  # semi-supervised GCN
+        #emb_out = model(all_node_id)    # shallow model
         loss = recon_loss(emb_out, pos_edge, neg_edge)
         loss.backward()
         optimizer.step()
@@ -120,7 +134,9 @@ def train():
         if epoch % 10 == 0:
             model.eval()
             model.training = False
-            embH, embB = model(botData.x, edgeH_pos), model(botData.x, edgeB_pos)
+            embH, embB = model(botData.x, edgeH_pos), model(botData.x, edgeB_pos)   # semi-supervised GCN
+            #embH, embB = model(all_node_id), model(all_node_id)  # shallow model
+
             num_Hedge, num_Bedge = len(edgeH_pos[0]), len(edgeB_pos[0])
             y_posH = embH.new_ones(edgeH_pos.size(1))
             y_posB = embB.new_ones(edgeB_pos.size(1))
