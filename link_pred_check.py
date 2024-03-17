@@ -58,16 +58,13 @@ def evaluate(z, pos_edge_index, neg_edge_index):
 
 
 def train():
-
-    # topic 1 pos
-    bot_label = np.load('Dataset/twi22/t1/t1_pos_bot_label.npy')
-    #treat_indicator = np.load('Dataset/twi22/t1/t1_pos_T_label.npy')
-    outcome = np.load('Dataset/twi22/t1/t1_pos_y.npy')
-    prop_label = np.load('Dataset/twi22/t1/t1_pos_prop_label.npy')
-    edge_index = np.load('Dataset/twi22/t1/t1_pos_edge.npy')
+    edge_index = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_edge.npy')    # (num_edge, 2)
+    bot_label = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_bot_label.npy')
+    outcome = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_y.npy')
+    prop_label = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_prop_label.npy')
 
     botData = Data(x=torch.FloatTensor(outcome).unsqueeze(-1), edge_index=torch.LongTensor(edge_index).t().contiguous())
-    transform = RandomLinkSplit(is_undirected=False, num_val=0, num_test=0.3, neg_sampling_ratio=1.0)
+    transform = RandomLinkSplit(is_undirected=False, num_val=0, num_test=0.3, neg_sampling_ratio=2.0)
     train_edge, _, test_edge = transform(botData)
 
     test_edge_select = []
@@ -79,31 +76,31 @@ def train():
         G.add_edge(edge_index[e][0], edge_index[e][1])
     G = G.reverse() # for checking precessor
 
-    human_ego_edge, bot_ego_edge = [], []
+    edgeH_pos, edgeB_pos = [], []
     for node in G.nodes:
         if prop_label[node] == 1:
             if bot_label[node] == 0:
                 ego_graph = nx.ego_graph(G, node)
                 ego_graph = ego_graph.reverse()
-                human_ego_edge.extend(list(ego_graph.edges()))
+                edgeH_pos.extend(list(ego_graph.edges()))
             elif bot_label[node] == 1:
                 ego_graph = nx.ego_graph(G, node)
                 ego_graph = ego_graph.reverse()
-                bot_ego_edge.extend(list(ego_graph.edges()))
+                edgeB_pos.extend(list(ego_graph.edges()))
 
-    print(len(test_edge_select), len(human_ego_edge), len(bot_ego_edge))
-    human_ego_test = set(test_edge_select)&set(human_ego_edge) # remove edge in the train set
-    bot_ego_test = set(test_edge_select)&set(bot_ego_edge)  # remove edge in the train set
-    print(len(human_ego_test), len(bot_ego_test))
+    #print(len(test_edge_select), len(edgeH_pos), len(edgeB_pos))
+    human_ego_test = set(test_edge_select)&set(edgeH_pos) # remove edge in the train set
+    bot_ego_test = set(test_edge_select)&set(edgeB_pos)  # remove edge in the train set
+    #print(len(human_ego_test), len(bot_ego_test))
 
-    human_ego_edge, bot_ego_edge = [], []
+    edgeH_pos, edgeB_pos = [], []
     for (e0, e1) in human_ego_test:
-        human_ego_edge.append([e0, e1])
+        edgeH_pos.append([e0, e1])
     for (e0, e1) in bot_ego_test:
-        bot_ego_edge.append([e0, e1])
+        edgeB_pos.append([e0, e1])
 
-    human_ego_edge, bot_ego_edge = torch.LongTensor(human_ego_edge).t(), torch.LongTensor(bot_ego_edge).t()
-    print(train_edge.edge_index.shape, human_ego_edge.shape, bot_ego_edge.shape)
+    edgeH_pos, edgeB_pos = torch.LongTensor(edgeH_pos).t(), torch.LongTensor(edgeB_pos).t()
+    #print(train_edge.edge_index.shape, edgeH_pos.shape, edgeB_pos.shape)
 
 
     model = SimpleGCN(in_dim=1, z_dim=32)
@@ -123,18 +120,33 @@ def train():
         if epoch % 10 == 0:
             model.eval()
             model.training = False
+            embH, embB = model(botData.x, edgeH_pos), model(botData.x, edgeB_pos)
+            num_Hedge, num_Bedge = len(edgeH_pos[0]), len(edgeB_pos[0])
+            y_posH = embH.new_ones(edgeH_pos.size(1))
+            y_posB = embB.new_ones(edgeB_pos.size(1))
 
-            embH, embB = model(botData.x, human_ego_edge), model(botData.x, bot_ego_edge)
+            neg_edge_test = test_edge.edge_label_index[:, (1 - test_edge.edge_label).nonzero()].squeeze(-1)
+            edgeH_neg, edgeB_neg = neg_edge_test[:,:num_Hedge], neg_edge_test[:,:num_Bedge]
+
+
+            y_negH, y_negB = edgeH_neg.new_zeros(edgeH_neg.size(1)), edgeB_neg.new_zeros(edgeB_neg.size(1))
+
+            yH, yB = torch.cat([y_posH, y_negH], dim=0), torch.cat([y_posB, y_negB], dim=0)
 
             decoder = InnerProductDecoder()
-            pos_pred_human, pos_pred_bot = decoder(embH, human_ego_edge, sigmoid=True), decoder(embB, bot_ego_edge, sigmoid=True)
+            pred_posH, pred_posB = decoder(embH, edgeH_pos, sigmoid=True), decoder(embB, edgeB_pos, sigmoid=True)
+            neg_predH, neg_predB = decoder(embH, edgeH_neg, sigmoid=True), decoder(embB, edgeB_neg, sigmoid=True)
 
-            y_human = embH.new_ones(human_ego_edge.size(1))
-            y_bot = embB.new_ones(human_ego_edge.size(1))
+            print("Epoch: ", epoch, " Test data: ", data)
+            print("Average Human/Bot link: {:.4f} {:.4f}".format(np.mean(pred_posH.detach().numpy()), np.mean(pred_posB.detach().numpy())))
 
-            print("Human: ", roc_auc_score(y_human, pos_pred_human.detach().numpy()), average_precision_score(y_human, pos_pred_human.detach().numpy()))
-            print("Bot: ", roc_auc_score(y_bot, pos_pred_human.detach().numpy()), average_precision_score(y_bot, pos_pred_human.detach().numpy()))
+            predH, predB = torch.cat([pred_posH, neg_predH], dim=0).detach().cpu().numpy(), \
+                                   torch.cat([pred_posB, neg_predB], dim=0).detach().cpu().numpy()
+            print("Human: {:.4f} {:.4f}".format(roc_auc_score(yH, predH), average_precision_score(yH, predH)))
+            print("Bot: {:.4f} {:.4f}".format(roc_auc_score(yB, predB), average_precision_score(yB, predB)))
+            print("-------------------------")
 
 
 if __name__ == "__main__":
+    data = 't1_pos'
     train()
