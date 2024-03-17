@@ -5,10 +5,11 @@ Data Preprocessing for twi-22:
 Dataset/twi22/dp_twi22xxx.ipynb
 
 Main content:
-adv_graph.py: proposed model
-until.py: some reusable component
-bs_train.py: 跑baseline model的训练
-baseline_model.py：各类baseline model的架构
-
-synthetic.py: generate synthetic data
-empirical.ipynb: analysis of opinions in twi-22, Naive approach for estimation
+* adv_graph.py: proposed model
+* until.py: some reusable component
+* bs_train.py: 跑baseline model的训练
+* baseline_model.py：各类baseline model的架构
+* synthetic.py: generate synthetic data
+* empirical+vis.ipynb: analysis of opinions in twi-22, Naive approach for estimation
+* result+vis.ipynb: 可视化实验和估计结果
+* emp_emb_pred.py: 用预测的方式检验embedding
