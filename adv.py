@@ -22,14 +22,14 @@ parser = argparse.ArgumentParser('BotImpact')
 parser.add_argument('--type', type=str, help='data used', default='t1_pos')
 parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
-parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
+parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6) # 0.6
 # training parameters
-parser.add_argument('--epoch', type=int, help='num epochs', default=300)
+parser.add_argument('--epoch', type=int, help='num epochs', default=800) # syn: 300, emp: 500
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
-parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1)
-parser.add_argument('--ljt', type=float, help='reg for treat pred', default=1)
-parser.add_argument('--ljg', type=float, help='reg for cf generate', default=1)
-parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1)
+parser.add_argument('--ly', type=float, help='reg for outcome pred', default=100) # emp: 100
+parser.add_argument('--ljt', type=float, help='reg for treat pred', default=0.01) # emp: 0.01
+parser.add_argument('--ljg', type=float, help='reg for cf generate', default=100) # emp: 10
+parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1) # emp: 1
 # saving embedding
 parser.add_argument('--save', type=bool, help='whether save emb', default=False)
 parser.add_argument('--save_epoch', type=int, help='saving emb epoch', default=150)
@@ -69,7 +69,7 @@ def load_data(dt='train'):
         prop_label = np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_prop_label.npy')
     # cal basic
     N = len(outcome)  # num of nodes
-    #x = degree(edge_index[:, 0])  # user node degree as feature
+    #x = torch.FloatTensor(degree(edge_index[:, 0]))  # user node degree as feature
     x = torch.FloatTensor(bot_label)
     # target: bot&human, opinion, treat&control
     target_var = torch.tensor(
@@ -101,8 +101,9 @@ class BotImpact(torch.nn.Module):
         self.convZ1 = GATConv(in_dim, h_dim, heads)
         self.convZ2 = GATConv(h_dim*heads, h_dim, heads)
         self.yNetS = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, h_dim), torch.nn.LeakyReLU())
-        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
-        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        
+        self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim*heads, 2), torch.nn.LeakyReLU())
 
     def forward(self, x, edge_index, fake_x, fake_edge_index, treat_idx, control_idx):
@@ -154,8 +155,8 @@ def generate_counterfactual_edge2(N, N_var_edge, inv_edge_index):
 
 def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     tau_pred = torch.cat([pred_c1, pred_1], dim=0) - torch.cat([pred_0, pred_c0], dim=0)
-    ave_treat = torch.mean(torch.cat([pred_1, pred_c1])).item()
-    ave_control = torch.mean(torch.cat([pred_0, pred_c0])).item()
+    ave_treat = torch.mean(torch.cat([pred_1, pred_c1], dim=0)).item()
+    ave_control = torch.mean(torch.cat([pred_0, pred_c0], dim=0)).item()
     print("treat ave: {:.4f}".format(ave_treat))
     print("control ave: {:.4f}".format(ave_control))
     print("--------------------------------")
@@ -257,7 +258,7 @@ def main():
 
             print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test, treat_eff, ave_treat, ave_control = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
-            print("Epoch: " + str(epoch))
+            print("Epoch: " + str(epoch), "Data: ", args.type)
             #similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
             #similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
             print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
@@ -288,7 +289,7 @@ def main():
 
 
 if __name__ == "__main__":
-    for seed in range(101, 111):
+    for seed in range(101, 102):
         set_seed(seed)
         res = {'Epoch': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
         main()
