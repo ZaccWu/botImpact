@@ -26,9 +26,9 @@ parser.add_argument('--mask_homo', type=float, help='mask edge percentage', defa
 # training parameters
 parser.add_argument('--epoch', type=int, help='num epochs', default=800) # syn: 300, emp: 500
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
-parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1) # syn: 1, emp: 100
+parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1) # syn: 1, emp: 1
 parser.add_argument('--ljt', type=float, help='reg for treat pred', default=0.01) # syn: 0.01, emp: 0.01
-parser.add_argument('--ljg', type=float, help='reg for cf generate', default=100) # syn: 100, emp: 10
+parser.add_argument('--ljg', type=float, help='reg for cf generate', default=100) # syn: 100, emp: 100
 parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1) # syn: 1, emp: 1
 # saving embedding
 parser.add_argument('--save', type=bool, help='whether save emb', default=False)
@@ -177,7 +177,7 @@ def main():
 
     # split train-val (outcome mask) 也可以根据test y MSE选模型
     treat_rd_idx, control_rd_idx = torch.randperm(treat_idx.size(0)), torch.randperm(control_idx.size(0))
-    Ntreat_train, Ncontrol_train = int(treat_idx.size(0) * 0.5), int(control_idx.size(0) * 0.5)
+    Ntreat_train, Ncontrol_train = int(treat_idx.size(0) * 0.8), int(control_idx.size(0) * 0.2)
     treat_idx_train, control_idx_train = treat_idx[treat_rd_idx[:Ntreat_train]], control_idx[control_rd_idx[:Ncontrol_train]]
     treat_idx_test, control_idx_test = treat_idx[treat_rd_idx[Ntreat_train:]], control_idx[control_rd_idx[Ncontrol_train:]]
     print("Preparing for training...")
