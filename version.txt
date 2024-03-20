@@ -4,8 +4,10 @@ discover_data_baidu.ipynb: data processing, sentiment analysis
 Data Preprocessing for twi-22:
 Dataset/twi22/dp_twi22xxx.ipynb
 
-Main content:
-* adv_graph.py: proposed model
+Proposed model
+* adv.py: t orthogonal reg
+* adv_graph.py: predict t as additional task
+
 * until.py: some reusable component
 * bs_train.py: 跑baseline model的训练
 * baseline_model.py：各类baseline model的架构

@@ -31,8 +31,9 @@ parser.add_argument('--ljt', type=float, help='reg for treat pred', default=0.01
 parser.add_argument('--ljg', type=float, help='reg for cf generate', default=100) # syn: 100, emp: 100
 parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1) # syn: 1, emp: 1
 # saving embedding
-parser.add_argument('--save', type=bool, help='whether save emb', default=False)
-parser.add_argument('--save_epoch', type=int, help='saving emb epoch', default=150)
+parser.add_argument('--save_train', type=bool, help='save training result', default=False)
+parser.add_argument('--rep_epoch', type=int, help='save epoch result', default=350)
+parser.add_argument('--save_rep', type=bool, help='save repulicating result', default=False)
 
 
 try:
@@ -52,14 +53,14 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def load_data(dt='train'):
+def load_data(data_id):
     if args.type in ['random', 'randomu', 'highbc', 'highcc', 'lowdu', 'highdu']:
         # load train data
-        edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+dt+'_edge.npy'))    # (num_edge, 2)
-        bot_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_bot_label.npy')
-        treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_T_label.npy')
-        outcome = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_y.npy')
-        prop_label = np.load('Dataset/synthetic/'+args.type+'/'+dt+'_prop_label.npy')
+        edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_edge.npy'))    # (num_edge, 2)
+        bot_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_bot_label.npy')
+        treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_T_label.npy')
+        outcome = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_y.npy')
+        prop_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_prop_label.npy')
     elif args.type in ['t1_pos', 't2_pos', 't3_pos', 't1_neg', 't2_neg', 't3_neg']:
         # load train data
         edge_index = torch.LongTensor(np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_edge.npy'))    # (num_edge, 2)
@@ -163,7 +164,7 @@ def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     return eATE, ePEHE, Treat_eff, ave_treat, ave_control
 
 def main():
-    botData_f, N_train, prop_label_train = load_data('train')
+    botData_f, N_train, prop_label_train = load_data(data_id)
     print("Finish loading data.")
     model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=16).to(device)
     model_g = BotImpact(in_dim=1, h_dim=32, out_dim=1).to(device)
@@ -270,25 +271,19 @@ def main():
             res['lcff'].append(np.mean(r_cffool))
             res['rjf'].append(np.mean(r_jf))
             res['ly'].append(outcome_MSE.detach().cpu().numpy())
-
             r_cffool, r_jf = 0, 0
 
-            # save embedding
-            if epoch == args.save_epoch:
-                Z_emb, treat_lb, y_tar = Zf.detach().cpu().numpy(), botData_f.y[:, 2].detach().cpu().numpy(), botData_f.y[:, 1].detach().cpu().numpy()
-                if args.save:
-                    savedt_path = 'result/save_emb/'+args.type+'/'
-                    if not os.path.isdir(savedt_path):
-                        os.makedirs(savedt_path)
-                    # emb_H + treat + y
-                    np.save(savedt_path + 'AdvG'+str(seed)+'.npy', np.concatenate([Z_emb,treat_lb[:,np.newaxis],y_tar[:,np.newaxis]], axis=-1))
 
 
 if __name__ == "__main__":
+    data_id = 1 # for synthetic data
+    # check diff seed
     for seed in range(101, 102):
         set_seed(seed)
         res = {'Epoch': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
         main()
-        res = pd.DataFrame(res)
-        res.to_csv('result/AdvG_'+args.type+str(seed)+'.csv', index=False)
+        if args.save_train:
+            res = pd.DataFrame(res)
+            res.to_csv('result/AdvG_'+args.type+str(seed)+'.csv', index=False)
 
+    # check diff data

@@ -221,7 +221,7 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
 # other robustness check
 type = 'semi-homo-4'
 
-for dt in ['train', 'test']:
+for dt in range(100):
     bot_label = np.array([0]*sample_user+[1]*sample_bot)
     Zu = np.random.choice([0,1], sample_user)
     Zb = np.ones(sample_bot)
@@ -231,7 +231,6 @@ for dt in ['train', 'test']:
     eps = np.random.normal(0, EPSILON, size=N)
     propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
     propagator[propagator_id] = 1
-
 
     edge_index = generate_network(Z, bot_label, type)
     outcome, Di, Bi, T = cal_outcome(Z, edge_index, propagator_id, bot_label, eps)
@@ -244,9 +243,9 @@ for dt in ['train', 'test']:
 
     if not os.path.isdir('Dataset/synthetic/'+type+'/'):
         os.makedirs('Dataset/synthetic/'+type+'/')
-    np.save('Dataset/synthetic/'+type+'/'+dt+'_edge.npy', edge_index)
-    np.save('Dataset/synthetic/'+type+'/'+dt+'_bot_label.npy', bot_label)
-    np.save('Dataset/synthetic/'+type+'/'+dt+'_T_label.npy', T)
-    np.save('Dataset/synthetic/'+type+'/'+dt+'_y.npy', outcome)
-    np.save('Dataset/synthetic/'+type+'/'+dt + '_prop_label.npy', propagator)
-    out_data.to_csv('Dataset/synthetic/'+type+'/'+dt+'_bot.csv', index=False)
+    np.save('Dataset/synthetic/'+type+'/'+str(dt)+'_edge.npy', edge_index)
+    np.save('Dataset/synthetic/'+type+'/'+str(dt)+'_bot_label.npy', bot_label)
+    np.save('Dataset/synthetic/'+type+'/'+str(dt)+'_T_label.npy', T)
+    np.save('Dataset/synthetic/'+type+'/'+str(dt)+'_y.npy', outcome)
+    np.save('Dataset/synthetic/'+type+'/'+str(dt) + '_prop_label.npy', propagator)
+    out_data.to_csv('Dataset/synthetic/'+type+'/'+str(dt)+'_bot.csv', index=False)
