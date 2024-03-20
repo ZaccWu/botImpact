@@ -24,15 +24,15 @@ parser.add_argument('--effect_true', type=float, help='ground-truth effect', def
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6) # 0.6
 # training parameters
-parser.add_argument('--epoch', type=int, help='num epochs', default=360) # syn: 300, emp: 500
+parser.add_argument('--epoch', type=int, help='num epochs', default=360) # syn: 350, emp: 500
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
 parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1) # syn: 1, emp: 1
-parser.add_argument('--ljt', type=float, help='reg for treat pred', default=0.1)
+parser.add_argument('--ljt', type=float, help='reg for treat pred', default=0.1) # syn: 0.1, emp: 0.1
 parser.add_argument('--ljg', type=float, help='reg for cf generate', default=100) # syn: 100, emp: 100
 parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1) # syn: 1, emp: 1
 # saving embedding
 parser.add_argument('--save_train', type=bool, help='save training result', default=False)
-parser.add_argument('--rep_epoch', type=int, help='save epoch result', default=350)
+parser.add_argument('--rep_epoch', type=int, help='save epoch result', default=350) # syn: 350, emp: 500
 
 
 try:
@@ -321,7 +321,7 @@ if __name__ == "__main__":
     # check diff data (for synthetic data)
     set_seed(101)
     res_dt = {'Data_id': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': []}
-    for data_id in range(100):
+    for data_id in range(1):
         train()
     res_dt = pd.DataFrame(res_dt)
     res_dt.to_csv('result/AdvG_'+args.type+'_all.csv', index=False)
