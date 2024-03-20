@@ -24,7 +24,7 @@ parser.add_argument('--effect_true', type=float, help='ground-truth effect', def
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6) # 0.6
 # training parameters
-parser.add_argument('--epoch', type=int, help='num epochs', default=800) # syn: 300, emp: 500
+parser.add_argument('--epoch', type=int, help='num epochs', default=360) # syn: 300, emp: 500
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
 parser.add_argument('--ly', type=float, help='reg for outcome pred', default=1) # syn: 1, emp: 1
 parser.add_argument('--ljt', type=float, help='reg for treat pred', default=0.1)
@@ -33,7 +33,6 @@ parser.add_argument('--ljd', type=float, help='reg for cf discrim', default=1) #
 # saving embedding
 parser.add_argument('--save_train', type=bool, help='save training result', default=False)
 parser.add_argument('--rep_epoch', type=int, help='save epoch result', default=350)
-parser.add_argument('--save_rep', type=bool, help='save repulicating result', default=False)
 
 
 try:
@@ -55,18 +54,18 @@ def set_seed(seed):
 
 def load_data(data_id):
     if args.type in ['random', 'randomu', 'highbc', 'highcc', 'lowdu', 'highdu']:
-        # # load train data (repeat experiment)
-        # edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_edge.npy'))    # (num_edge, 2)
-        # bot_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_bot_label.npy')
-        # treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_T_label.npy')
-        # outcome = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_y.npy')
-        # prop_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_prop_label.npy')
+        # load train data (repeat experiment)
+        edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_edge.npy'))    # (num_edge, 2)
+        bot_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_bot_label.npy')
+        treat_indicator = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_T_label.npy')
+        outcome = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_y.npy')
+        prop_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_prop_label.npy')
 
-        edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/train_edge.npy'))    # (num_edge, 2)
-        bot_label = np.load('Dataset/synthetic/'+args.type+'/train_bot_label.npy')
-        treat_indicator = np.load('Dataset/synthetic/'+args.type+'/train_T_label.npy')
-        outcome = np.load('Dataset/synthetic/'+args.type+'/train_y.npy')
-        prop_label = np.load('Dataset/synthetic/'+args.type+'/train_prop_label.npy')
+        # edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/train_edge.npy'))    # (num_edge, 2)
+        # bot_label = np.load('Dataset/synthetic/'+args.type+'/train_bot_label.npy')
+        # treat_indicator = np.load('Dataset/synthetic/'+args.type+'/train_T_label.npy')
+        # outcome = np.load('Dataset/synthetic/'+args.type+'/train_y.npy')
+        # prop_label = np.load('Dataset/synthetic/'+args.type+'/train_prop_label.npy')
     elif args.type in ['t1_pos', 't2_pos', 't3_pos', 't1_neg', 't2_neg', 't3_neg']:
         # load train data
         edge_index = torch.LongTensor(np.load('Dataset/twi22/'+args.type[:2]+'/'+args.type+'_edge.npy'))    # (num_edge, 2)
@@ -173,7 +172,7 @@ def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
     Treat_eff = torch.mean(tau_pred)
     return eATE, ePEHE, Treat_eff, ave_treat, ave_control
 
-def main():
+def train():
     botData_f, N_train, prop_label_train = load_data(data_id)
     print("Finish loading data.")
     model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=16).to(device)
@@ -197,7 +196,7 @@ def main():
     r_y, r_jt, r_cffool, r_jf = 0, 0, 0, 0
 
     # train
-    for epoch in range(args.epoch):
+    for epoch in range(1, args.epoch):
         model_f.train()
         model_g.train()
         model_d.train()
@@ -243,12 +242,12 @@ def main():
         optimizer_d.step()
 
         # check the loss function
-        print("ly, ljt, lcff, ljf: {:.4f} {:.4f} {:.4f} {:.4f}".format(loss_y.item(), loss_jt.item(),
-                                                                       loss_cffool.item(), loss_jf.item()))
+        # print("ly, ljt, lcff, ljf: {:.4f} {:.4f} {:.4f} {:.4f}".format(loss_y.item(), loss_jt.item(),
+        #                                                                loss_cffool.item(), loss_jf.item()))
         r_cffool, r_jf = r_cffool+loss_cffool.item(), r_jf+loss_jf.item()
 
         # Evaluation
-        if epoch%10 == 0:
+        if epoch%350 == 0:
             model_g.eval()
             # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
             out_y1, _, out_y0, _, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
@@ -265,37 +264,64 @@ def main():
             out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
 
-            print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            # print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test, treat_eff, ave_treat, ave_control = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch), "Data: ", args.type)
-            #similarity_check(Zf[treat_idx_ok], Zcf[control_idx_ok])
-            #similarity_check(Zf[control_idx_ok], Zcf[treat_idx_ok])
-            print('eATE: {:.4f}'.format(eATE_test.detach().cpu().numpy()),
-                  'ePEHE: {:.4f}'.format(ePEHE_test.detach().cpu().numpy()),
-                  'Effect: {:.4f}'.format(treat_eff.detach().cpu().numpy()))
-            print("================================")
 
-            res['Epoch'].append(epoch)
-            res['aveT'].append(ave_treat)
-            res['aveC'].append(ave_control)
-            res['eATE'].append(eATE_test.detach().cpu().numpy())
-            res['ePEHE'].append(ePEHE_test.detach().cpu().numpy())
-            res['lcff'].append(np.mean(r_cffool))
-            res['rjf'].append(np.mean(r_jf))
-            res['ly'].append(outcome_MSE.detach().cpu().numpy())
+            eATE_test = eATE_test.detach().cpu().numpy()
+            ePEHE_test = ePEHE_test.detach().cpu().numpy()
+            treat_eff = treat_eff.detach().cpu().numpy()
+
+            # print('eATE: {:.4f}'.format(eATE_test),
+            #       'ePEHE: {:.4f}'.format(ePEHE_test),
+            #       'Effect: {:.4f}'.format(treat_eff))
+            # print("================================")
+
+            # # check diff seed
+            # res['Epoch'].append(epoch)
+            # res['aveT'].append(ave_treat)
+            # res['aveC'].append(ave_control)
+            # res['eATE'].append(eATE_test)
+            # res['ePEHE'].append(ePEHE_test)
+            # res['lcff'].append(np.mean(r_cffool))
+            # res['rjf'].append(np.mean(r_jf))
+            # res['ly'].append(outcome_MSE.detach().cpu().numpy())
+
             r_cffool, r_jf = 0, 0
+
+            # check diff data
+            if epoch == args.rep_epoch:
+                eATE_R, ePEHE_R, Mean1, Mean0 = eATE_test, ePEHE_test, ave_treat, ave_control
+                res_dt['Data_id'].append(data_id)
+                res_dt['aveT'].append(Mean1)
+                res_dt['aveC'].append(Mean0)
+                res_dt['eATE'].append(eATE_R)
+                res_dt['ePEHE'].append(ePEHE_R)
+                print("Finish training: ", data_id)
+                print('eATE: {:.4f}'.format(eATE_R),
+                      'ePEHE: {:.4f}'.format(ePEHE_R),
+                      'mean1: {:.4f}'.format(Mean1),
+                      'mean0: {:.4f}'.format(Mean0))
+                print("================================")
+
 
 
 
 if __name__ == "__main__":
-    data_id = 1 # for synthetic data
-    # check diff seed
-    for seed in range(101, 102):
-        set_seed(seed)
-        res = {'Epoch': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
-        main()
-        if args.save_train:
-            res = pd.DataFrame(res)
-            res.to_csv('result/AdvG_'+args.type+str(seed)+'.csv', index=False)
 
-    # check diff data
+    # # check diff seed
+    # for seed in range(101, 102):
+    #     set_seed(seed)
+    #     res = {'Epoch': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': [], 'rjf': [], 'lcff': [], 'ly': []}
+    #     main()
+    #     if args.save_train:
+    #         res = pd.DataFrame(res)
+    #         res.to_csv('result/AdvG_'+args.type+str(seed)+'.csv', index=False)
+
+    # check diff data (for synthetic data)
+    set_seed(101)
+    res_dt = {'Data_id': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': []}
+    for data_id in range(100):
+        train()
+    res_dt = pd.DataFrame(res_dt)
+    res_dt.to_csv('result/AdvG_'+args.type+'_all.csv', index=False)

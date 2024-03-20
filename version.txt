@@ -5,7 +5,6 @@ Data Preprocessing for twi-22:
 Dataset/twi22/dp_twi22xxx.ipynb
 
 Proposed model
-* adv.py: t orthogonal reg
 * adv_graph.py: predict t as additional task
 
 * until.py: some reusable component

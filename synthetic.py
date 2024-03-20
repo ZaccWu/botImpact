@@ -7,16 +7,14 @@ from torch_geometric.utils import degree
 from torch_geometric.utils import to_networkx
 import networkx as nx
 
-seed = 101
-random.seed(seed)
-np.random.seed(seed)
+
 
 sample_user = 3000
 sample_bot = 100
 betaZ = 1
 betaT = 2
 betaB = 1
-EPSILON = 0.1
+EPSILON = 0.2
 N = sample_user + sample_bot
 
 def generate_network(z, bl, type):
@@ -211,7 +209,7 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
     return y, Di, Bi, T
 
 
-# type = 'random'   # bots randomly connect
+type = 'random'   # bots randomly connect
 # type = 'randomu'  # bots randomly connect users
 # type = 'highdu'   # bots connect high-degree users
 # type = 'lowdu'    # bots connect low-degree users
@@ -219,9 +217,13 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
 # type = 'highcc'   # bots connect high-closeness-centrality users
 
 # other robustness check
-type = 'semi-homo-4'
+# type = 'semi-homo-4'
 
 for dt in range(100):
+    seed = dt
+    random.seed(seed)
+    np.random.seed(seed)
+
     bot_label = np.array([0]*sample_user+[1]*sample_bot)
     Zu = np.random.choice([0,1], sample_user)
     Zb = np.ones(sample_bot)
@@ -249,3 +251,4 @@ for dt in range(100):
     np.save('Dataset/synthetic/'+type+'/'+str(dt)+'_y.npy', outcome)
     np.save('Dataset/synthetic/'+type+'/'+str(dt) + '_prop_label.npy', propagator)
     out_data.to_csv('Dataset/synthetic/'+type+'/'+str(dt)+'_bot.csv', index=False)
+    print("Finish generate: ", dt)
