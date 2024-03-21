@@ -219,7 +219,7 @@ type = 'random'   # bots randomly connect
 # other robustness check
 # type = 'semi-homo-4'
 
-for dt in range(100):
+for dt in range(201, 202):
     seed = dt
     random.seed(seed)
     np.random.seed(seed)

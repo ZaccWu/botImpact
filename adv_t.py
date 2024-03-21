@@ -268,6 +268,16 @@ def train():
             eATE_test, ePEHE_test, treat_eff, ave_treat, ave_control = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch), "Data: ", args.type)
 
+            # comparison with naive approach
+            # naive:
+            ave_t_naive = torch.mean(botData_f.y[:, 1][treat_idx]).item()
+            ave_c_naive = torch.mean(botData_f.y[:, 1][control_idx]).item()
+            ave_t_adv = torch.mean(torch.cat([out_y1, out_yc1], dim=0)).item()
+            ave_c_adv = torch.mean(torch.cat([out_y0, out_yc0], dim=0)).item()
+            print("Naive | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_naive, ave_c_naive, (ave_t_naive-ave_c_naive)-args.effect_true))
+            print("AdvG  | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_adv, ave_c_adv, (ave_t_adv-ave_c_adv)-args.effect_true))
+
+            # model output
             eATE_test = eATE_test.detach().cpu().numpy()
             ePEHE_test = ePEHE_test.detach().cpu().numpy()
             treat_eff = treat_eff.detach().cpu().numpy()
@@ -289,7 +299,7 @@ def train():
 
             r_cffool, r_jf = 0, 0
 
-            # check diff data
+            # # check diff data
             # if epoch == args.rep_epoch:
             #     eATE_R, ePEHE_R, Mean1, Mean0 = eATE_test, ePEHE_test, ave_treat, ave_control
             #     res_dt['Data_id'].append(data_id)
@@ -297,17 +307,20 @@ def train():
             #     res_dt['aveC'].append(Mean0)
             #     res_dt['eATE'].append(eATE_R)
             #     res_dt['ePEHE'].append(ePEHE_R)
-                # print("Finish training: ", data_id)
-                # print('eATE: {:.4f}'.format(eATE_R),
-                #       'ePEHE: {:.4f}'.format(ePEHE_R),
-                #       'mean1: {:.4f}'.format(Mean1),
-                #       'mean0: {:.4f}'.format(Mean0))
-                # print("================================")
+            #     print("Finish training: ", data_id)
+            #     print('eATE: {:.4f}'.format(eATE_R),
+            #           'ePEHE: {:.4f}'.format(ePEHE_R),
+            #           'mean1: {:.4f}'.format(Mean1),
+            #           'mean0: {:.4f}'.format(Mean0))
+            #     print("================================")
 
 
 
 
 if __name__ == "__main__":
+    # data_id:
+    # 0-99: benchmark+ablation (100 repeat experiment)
+
 
     # check diff seed
     for seed in range(101, 102):
