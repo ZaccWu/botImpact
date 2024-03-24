@@ -53,7 +53,7 @@ def set_seed(seed):
 
 
 def load_data(data_id):
-    if args.type in ['random', 'randomu', 'highbc', 'highcc', 'lowdu', 'highdu']:
+    if args.type in ['random', 'randomu', 'highbc', 'highcc', 'lowdu', 'highdu', 'semiho']:
         # load train data (repeat experiment)
         edge_index = torch.LongTensor(np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_edge.npy'))    # (num_edge, 2)
         bot_label = np.load('Dataset/synthetic/'+args.type+'/'+str(data_id)+'_bot_label.npy')
