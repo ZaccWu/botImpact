@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser('BotImpact')
 
 # data parameters
 parser.add_argument('--type', type=str, help='data used', default='random')
-parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=-1) # synthetic: -1, empirical: 0
+parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
 parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6) # 0.6
 # training parameters
@@ -76,11 +76,12 @@ def load_data(data_id):
     # cal basic
     N = len(outcome)  # num of nodes
     #x = torch.FloatTensor(degree(edge_index[:, 0]))  # user node degree as feature
-    x = torch.FloatTensor(bot_label)
+    x = torch.cat([torch.FloatTensor(bot_label).unsqueeze(-1), torch.FloatTensor(treat_indicator).unsqueeze(-1)], dim=-1)
     # target: bot&human, opinion, treat&control
     target_var = torch.tensor(
         np.concatenate([bot_label[:, np.newaxis], outcome[:, np.newaxis], treat_indicator[:, np.newaxis]], axis=-1))  # (num_nodes, 3)
-    botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var).to(device)
+    #botData = Data(x=x.unsqueeze(-1), edge_index=edge_index.t().contiguous(), y=target_var).to(device)
+    botData = Data(x=x, edge_index=edge_index.t().contiguous(), y=target_var).to(device)
     return botData, N, prop_label
 
 
@@ -175,8 +176,8 @@ def evaluate_metric(pred_0, pred_1, pred_c1, pred_c0):
 def train():
     botData_f, N_train, prop_label_train = load_data(data_id)
     print("Finish loading data.")
-    model_f = MaskEncoder(in_dim=1, h_dim=32, out_dim=16).to(device)
-    model_g = BotImpact(in_dim=1, h_dim=32, out_dim=1).to(device)
+    model_f = MaskEncoder(in_dim=2, h_dim=32, out_dim=16).to(device)
+    model_g = BotImpact(in_dim=2, h_dim=32, out_dim=1).to(device)
     model_d = Discriminator(in_dim=32, h_dim=32).to(device) # model_d in_dim = model_g h_dim
     optimizer_fg = torch.optim.Adam([{'params': model_f.parameters(), 'lr': 0.001},
                                   {'params': model_g.parameters(), 'lr': 0.001}])
