@@ -19,10 +19,10 @@ EPS = 1e-15
 parser = argparse.ArgumentParser('BotImpact')
 
 # data parameters
-parser.add_argument('--type', type=str, help='data used', default='random')
+parser.add_argument('--type', type=str, help='data used', default='t1_pos')
 parser.add_argument('--effect_true', type=float, help='ground-truth effect', default=0) # synthetic: -1, empirical: 0
 # model parameters
-parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6) # 0.6
+parser.add_argument('--mask_homo', type=float, help='mask edge percentage', default=0.6)
 # training parameters
 parser.add_argument('--epoch', type=int, help='num epochs', default=360) # syn: 350, emp: 500
 parser.add_argument('--gpu', type=int, help='gpu', default=0)
@@ -76,6 +76,8 @@ def load_data(data_id):
     # cal basic
     N = len(outcome)  # num of nodes
     #x = torch.FloatTensor(degree(edge_index[:, 0]))  # user node degree as feature
+    #x = torch.FloatTensor(bot_label)
+    #x = torch.FloatTensor(treat_indicator)
     x = torch.cat([torch.FloatTensor(bot_label).unsqueeze(-1), torch.FloatTensor(treat_indicator).unsqueeze(-1)], dim=-1)
     # target: bot&human, opinion, treat&control
     target_var = torch.tensor(
@@ -110,6 +112,8 @@ class BotImpact(torch.nn.Module):
         self.yNetS = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, h_dim), torch.nn.LeakyReLU())
         self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
         self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        #self.yNet1 = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
+        #self.yNet0 = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, h_dim), torch.nn.LeakyReLU(), torch.nn.Linear(h_dim, out_dim), torch.nn.LeakyReLU())
 
         self.propenNet = torch.nn.Sequential(torch.nn.Linear(h_dim * heads, 2))
 
@@ -121,6 +125,9 @@ class BotImpact(torch.nn.Module):
         # predict outcome
         y1, yc0 = self.yNet1(self.yNetS(xZ2[treat_idx])), self.yNet0(self.yNetS(xfZ2[treat_idx])) # xfZ的treat_idx是counterfactual中的control
         y0, yc1 = self.yNet0(self.yNetS(xZ2[control_idx])), self.yNet1(self.yNetS(xfZ2[control_idx]))
+        
+        #y1, yc0 = self.yNet1(xZ2[treat_idx]), self.yNet0(xfZ2[treat_idx]) # xfZ的treat_idx是counterfactual中的control
+        #y0, yc1 = self.yNet0(xZ2[control_idx]), self.yNet1(xfZ2[control_idx])
         # judge the node is treated or controled
         tprob  = self.propenNet(xZ2)
         return y1.squeeze(-1), yc0.squeeze(-1), y0.squeeze(-1), yc1.squeeze(-1), xZ2, xfZ2, tprob.squeeze(-1)
@@ -210,8 +217,7 @@ def train():
         # counterfactual graph generation
         cfgraph_edge = generate_counterfactual_edge2(N_train, N_homo_edge, hetero_edge_index) # for effect estimation
         botData_cf = Data(x=botData_f.x, edge_index=cfgraph_edge.contiguous(), y=botData_f.y).to(device)
-        #print("treat/control: ", treat_idx_train.shape, control_idx_train.shape)
-
+        
         # Model output
         # out_y1, out_yc0: (num_treat_train), out_y0, out_yc1: (num_control_train), *_prob: (num_nodes)
         out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, treat_prob = model_g(botData_f.x, botData_f.edge_index,
@@ -243,8 +249,8 @@ def train():
         optimizer_d.step()
 
         # check the loss function
-        # print("ly, ljt, lcff, ljf: {:.4f} {:.4f} {:.4f} {:.4f}".format(loss_y.item(), loss_jt.item(),
-        #                                                                loss_cffool.item(), loss_jf.item()))
+        #print("ly, ljt, lcff, ljf: {:.4f} {:.4f} {:.4f} {:.4f}".format(loss_y.item(), loss_jt.item(),
+        #                                                               loss_cffool.item(), loss_jf.item()))
         r_cffool, r_jf = r_cffool+loss_cffool.item(), r_jf+loss_jf.item()
 
         # Evaluation
@@ -265,18 +271,21 @@ def train():
             out_y1, out_yc0, out_y0, out_yc1, Zf, Zcf, _ = model_g(botData_f.x, botData_f.edge_index,
                                                                         botData_cf.x, botData_cf.edge_index, treat_idx_ok, control_idx_ok)
 
-            # print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
+            print("treat/control: ", treat_idx_ok.shape, control_idx_ok.shape)
             eATE_test, ePEHE_test, treat_eff, ave_treat, ave_control = evaluate_metric(out_y0, out_y1, out_yc1, out_yc0)
             print("Epoch: " + str(epoch), "Data: ", args.type)
 
             # comparison with naive approach
             # naive:
-            ave_t_naive = torch.mean(botData_f.y[:, 1][treat_idx]).item()
-            ave_c_naive = torch.mean(botData_f.y[:, 1][control_idx]).item()
-            ave_t_adv = torch.mean(torch.cat([out_y1, out_yc1], dim=0)).item()
-            ave_c_adv = torch.mean(torch.cat([out_y0, out_yc0], dim=0)).item()
-            print("Naive | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_naive, ave_c_naive, (ave_t_naive-ave_c_naive)-args.effect_true))
-            print("AdvG  | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_adv, ave_c_adv, (ave_t_adv-ave_c_adv)-args.effect_true))
+            #ave_t_naive = torch.mean(botData_f.y[:, 1][treat_idx]).item()
+            #ave_c_naive = torch.mean(botData_f.y[:, 1][control_idx]).item()
+            #ave_t_adv_wcf = torch.mean(torch.cat([out_y1, out_yc1], dim=0)).item()
+            #ave_c_adv_wcf = torch.mean(torch.cat([out_y0, out_yc0], dim=0)).item()
+            #ave_t_adv = torch.mean(out_y1).item()
+            #ave_c_adv = torch.mean(out_y0).item()
+            #print("Naive        | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_naive, ave_c_naive, (ave_t_naive-ave_c_naive)-args.effect_true))
+            #print("AdvG with CF | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_adv_wcf, ave_c_adv_wcf, (ave_t_adv_wcf-ave_c_adv_wcf)-args.effect_true))
+            #print("AdvG         | T: {:.4f}, C: {:.4f}, Bias: {:.4f}".format(ave_t_adv, ave_c_adv, (ave_t_adv-ave_c_adv)-args.effect_true))
 
             # model output
             eATE_test = eATE_test.detach().cpu().numpy()
@@ -289,31 +298,38 @@ def train():
             print("================================")
 
             # check diff seed
-            res['Epoch'].append(epoch)
-            res['aveT'].append(ave_treat)
-            res['aveC'].append(ave_control)
-            res['eATE'].append(eATE_test)
-            res['ePEHE'].append(ePEHE_test)
-            res['lcff'].append(np.mean(r_cffool))
-            res['rjf'].append(np.mean(r_jf))
-            res['ly'].append(outcome_MSE.detach().cpu().numpy())
+            #res['Epoch'].append(epoch)
+            #res['aveT'].append(ave_treat)
+            #res['aveC'].append(ave_control)
+            #res['eATE'].append(eATE_test)
+            #res['ePEHE'].append(ePEHE_test)
+            #res['lcff'].append(np.mean(r_cffool))
+            #res['rjf'].append(np.mean(r_jf))
+            #res['ly'].append(outcome_MSE.detach().cpu().numpy())
 
             r_cffool, r_jf = 0, 0
 
-            # # check diff data
-            # if epoch == args.rep_epoch:
-            #     eATE_R, ePEHE_R, Mean1, Mean0 = eATE_test, ePEHE_test, ave_treat, ave_control
-            #     res_dt['Data_id'].append(data_id)
-            #     res_dt['aveT'].append(Mean1)
-            #     res_dt['aveC'].append(Mean0)
-            #     res_dt['eATE'].append(eATE_R)
-            #     res_dt['ePEHE'].append(ePEHE_R)
-            #     print("Finish training: ", data_id)
-            #     print('eATE: {:.4f}'.format(eATE_R),
-            #           'ePEHE: {:.4f}'.format(ePEHE_R),
-            #           'mean1: {:.4f}'.format(Mean1),
-            #           'mean0: {:.4f}'.format(Mean0))
-            #     print("================================")
+            # check diff data
+            if epoch == args.rep_epoch:
+                eATE_R, ePEHE_R, Mean1, Mean0 = eATE_test, ePEHE_test, ave_treat, ave_control
+                # treatment effect (ATT)
+                print("Num of eval bot: ", len(out_y1), len(out_yc0))
+                print("Treat idx: ", treat_idx_ok)
+                print("Diff: ", out_y1 - out_yc0)
+                print("Treat: {:.4f}, Counterfactal Control: {:.4f}".format(torch.mean(out_y1).item(),
+                                                                            torch.mean(out_yc0).item()))
+
+                # res_dt['Data_id'].append(data_id)
+                # res_dt['aveT'].append(Mean1)
+                # res_dt['aveC'].append(Mean0)
+                # res_dt['eATE'].append(eATE_R)
+                # res_dt['ePEHE'].append(ePEHE_R)
+                print("Finish training: ", data_id)
+                print('eATE: {:.4f}'.format(eATE_R),
+                      'ePEHE: {:.4f}'.format(ePEHE_R),
+                      'mean1: {:.4f}'.format(Mean1),
+                      'mean0: {:.4f}'.format(Mean0))
+                print("================================")
 
 
 
@@ -321,8 +337,6 @@ def train():
 if __name__ == "__main__":
     # data_id:
     # 0-99: benchmark+ablation (100 repeat experiment)
-
-
     # check diff seed
     for seed in range(101, 102):
         data_id = 0
@@ -333,7 +347,7 @@ if __name__ == "__main__":
             res = pd.DataFrame(res)
             res.to_csv('result/AdvG_'+args.type+str(seed)+'.csv', index=False)
 
-    # # check diff data (for synthetic data)
+    # check diff data (for synthetic data)
     # set_seed(101)
     # res_dt = {'Data_id': [], 'aveT': [], 'aveC': [], 'eATE': [], 'ePEHE': []}
     # for data_id in range(100):
