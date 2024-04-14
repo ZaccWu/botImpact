@@ -28,7 +28,7 @@ def generate_network(z, bl, type):
                 if bl[i] or bl[j] == 1:
                     p = 0.01
                 else:
-                    p = 0.02 if z[i] == z[j] else 0.005
+                    p = 0.02 if z[i] == z[j] else 0.005 # default: 0.02, 0.005
                 friend = np.random.binomial(1, p)
                 if friend == 1:
                     edge_idx.append([i, j])
@@ -37,7 +37,7 @@ def generate_network(z, bl, type):
     elif type == 'randomu':
         for i in range(sample_user):
             for j in range(i + 1, sample_user):
-                p = 0.02 if z[i] == z[j] else 0.005
+                p = 0.02 if z[i] == z[j] else 0.005 # default: 0.02, 0.005
                 friend = np.random.binomial(1, p)
                 if friend == 1:
                     edge_idx.append([i, j])
@@ -135,13 +135,45 @@ def generate_network(z, bl, type):
                 if bl[i] or bl[j] == 1:
                     p = 0.01
                 else:
-                    # default: alpha0 = 0, alpha1 = 3, density = 0.3, mean(zi-zj) = 0.331
-                    logit = np.exp(0 * 1 - 3 * np.sqrt(np.square(z[i] - z[j]))) * 0.3
+                    logit = np.exp(0 * 1 - 1 * np.sqrt(np.square(z[i] - z[j]))) * 0.02
                     p = logit / (1 + logit)
                 friend = np.random.binomial(1, p)
                 if friend == 1:
                     edge_idx.append([i, j])
                     edge_idx.append([j, i])
+
+    elif type == 'crandom':
+        for i in range(N):
+            for j in range(i + 1, N):
+                if bl[i] or bl[j] == 1:
+                    p = 0.01
+                else:
+                    logit = np.exp(0 * 1 - 1 * np.sqrt(np.square(z[i] - z[j]))) * 0.02
+                    p = logit / (1 + logit)
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([i, j])
+                    edge_idx.append([j, i])
+
+    elif type == 'chighdu':
+        for i in range(sample_user):
+            for j in range(i + 1, sample_user):
+                logit = np.exp(0 * 1 - 1 * np.sqrt(np.square(z[i] - z[j]))) * 0.02
+                p = logit / (1 + logit)
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([i, j])
+                    edge_idx.append([j, i])
+        ndeg = degree(torch.LongTensor(edge_idx).T[0,:])
+        max_deg = torch.max(ndeg).item()
+        for u in range(sample_user):
+            for b in range(sample_user, N):
+                p = 0.02*ndeg[u]/max_deg
+                friend = np.random.binomial(1, p)
+                if friend == 1:
+                    edge_idx.append([u, b])
+                    edge_idx.append([b, u])
+
     return np.array(edge_idx)
 
 
@@ -153,17 +185,17 @@ def cal_outcome(Z, edge_idx, propagator_id, bl, eps):
         u, v = edge_idx[i][0], edge_idx[i][1]
         friend_dict.setdefault(u, []).append(v)
 
-    if type in ['semiho']:
-        trait_sum_h, trait_sum_b = [], []
-        bot_ids, human_ids = np.nonzero(bl)[0], np.nonzero(1-bl)[0]
-        # neighbor的同时应该是Human trait
-        for prop in propagator_id:
-            friend_id = friend_dict[prop]
-            trait_sum_h.extend(Z[list(set(friend_id)&set(human_ids))].tolist())
-        for bot in bot_ids:
-            friend_id = friend_dict[bot]
-            trait_sum_b.extend(Z[list(set(friend_id)&set(human_ids))].tolist())
-        print("Ave h: ", np.mean(trait_sum_h), " Ave b: ", np.mean(trait_sum_b))
+    # for neighbor homophily testing
+    trait_sum_h, trait_sum_b = [], []
+    bot_ids, human_ids = np.nonzero(bl)[0], np.nonzero(1-bl)[0]
+    # neighbor的同时应该是Human trait
+    for prop in propagator_id:
+        friend_id = friend_dict[prop]
+        trait_sum_h.extend(Z[list(set(friend_id)&set(human_ids))].tolist())
+    for bot in bot_ids:
+        friend_id = friend_dict[bot]
+        trait_sum_b.extend(Z[list(set(friend_id)&set(human_ids))].tolist())
+    print("Ave h: ", np.mean(trait_sum_h), " Ave b: ", np.mean(trait_sum_b))
 
 
     y = np.zeros(N)
@@ -202,6 +234,13 @@ for dt in range(201, 202):
     bot_label = np.array([0]*sample_user+[1]*sample_bot)
 
     if type in ['random', 'randomu', 'highdu', 'lowdu', 'highbc', 'highcc']:
+        Zu = np.random.choice([0,1], sample_user)
+        Zb = np.ones(sample_bot)                    # bot的latent trait全为1（假设Bot都是推广某产品的）
+        Z = np.concatenate([Zu, Zb])
+        propagator = np.zeros(sample_user + sample_bot)
+        propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
+
+    if type in ['crandom', 'chighdu']:
         Zu = np.random.choice([-1,0,1], sample_user)
         Zb = np.ones(sample_bot)                    # bot的latent trait全为1（假设Bot都是推广某产品的）
         Z = np.concatenate([Zu, Zb])
@@ -222,6 +261,7 @@ for dt in range(201, 202):
 
     propagator[propagator_id] = 1
     edge_index = generate_network(Z, bot_label, type)
+    print("Network density: ", len(edge_index)/(N*N))
 
 
     eps = np.random.normal(0, EPSILON, size=N)
