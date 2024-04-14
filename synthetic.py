@@ -202,11 +202,11 @@ for dt in range(201, 202):
     bot_label = np.array([0]*sample_user+[1]*sample_bot)
 
     if type in ['random', 'randomu', 'highdu', 'lowdu', 'highbc', 'highcc']:
-        Zu = np.random.choice([0,1], sample_user)  # user的Latent trait为0或1
+        Zu = np.random.choice([-1,0,1], sample_user)
         Zb = np.ones(sample_bot)                    # bot的latent trait全为1（假设Bot都是推广某产品的）
         Z = np.concatenate([Zu, Zb])
         propagator = np.zeros(sample_user + sample_bot)
-        propagator_id = random.sample(set(np.nonzero(Zu)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
+        propagator_id = random.sample(set(np.nonzero(Zu)[0])&set(np.nonzero(Zu+1)[0]),sample_bot)  # 推广产品的用户id (假设和bot数量相同)
 
     elif type in ['semiho']:
         Zu = np.random.uniform(0, 1, size=sample_user)  # user的Latent trait为0或1
