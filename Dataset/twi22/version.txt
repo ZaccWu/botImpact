@@ -19,3 +19,4 @@ For model free evidence
 根据用户的location（作为trait）分析human和bot周围的trait是否asymmetric（统计检验）
 （2）dp22_twi22vis_homo.ipynb
 location作为trait，提供一些asymmetric的可视化
+（3）dp23_twi22Influencer_analysis.ipynb
