@@ -10,6 +10,13 @@ from torch_geometric.nn import GCNConv
 
 EPS = 1e-15
 
+def set_seed(seed):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
 
 class SimpleGCN(torch.nn.Module):
 	def __init__(self,in_dim, z_dim, h_dim=32):
@@ -68,11 +75,91 @@ def evaluate(z, pos_edge_index, neg_edge_index):
 	return roc_auc_score(y, pred), average_precision_score(y, pred)
 
 
-
-def train():
+def train_FullGraph():
+    # pos, neg中都含有所有edge，只是influencer和treat/control的label不同
     edge_index = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_edge.npy')    # (num_edge, 2)
     bot_label = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_bot_label.npy')
-    outcome = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_y.npy')
+
+    # 没有特征时，botData只提供链接信息，只用于split link，模型使用不需要特征的Shallow Embedding
+    botData = Data(edge_index=torch.LongTensor(edge_index).t().contiguous())
+    transform = RandomLinkSplit(is_undirected=False, num_val=0, num_test=0.3, neg_sampling_ratio=2.0)
+    train_edge, _, test_edge = transform(botData)
+
+    HHtest_edge_select, BHtest_edge_select = [], []
+    for i in range(len(test_edge.edge_index[0])):
+        follower_id = test_edge.edge_index[0][i].item()
+        followed_id = test_edge.edge_index[1][i].item()
+        if bot_label[follower_id] == 0 and bot_label[followed_id] == 0:
+            HHtest_edge_select.append((follower_id, followed_id))
+        elif (bot_label[follower_id] == 1 and bot_label[followed_id] == 0) or (bot_label[follower_id] == 0 and bot_label[followed_id] == 1):
+            BHtest_edge_select.append((follower_id, followed_id))
+
+
+    edgeH_pos, edgeB_pos = [], []
+    for (e0, e1) in HHtest_edge_select:
+        edgeH_pos.append([e0, e1])
+    for (e0, e1) in BHtest_edge_select:
+        edgeB_pos.append([e0, e1])
+
+    edgeH_pos, edgeB_pos = torch.LongTensor(edgeH_pos).t(), torch.LongTensor(edgeB_pos).t()
+    #print(train_edge.edge_index.shape, edgeH_pos.shape, edgeB_pos.shape)
+    all_node_id = torch.LongTensor([i for i in range(len(bot_label))])
+
+    #model = SimpleGCN(in_dim=1, z_dim=32)
+    model = SallowEmb(node_size=len(bot_label), z_dim=32)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    for epoch in range(200):
+        model.train()
+        model.training = True
+        optimizer.zero_grad()
+        pos_edge, neg_edge = train_edge.edge_label_index[:, train_edge.edge_label.nonzero()].squeeze(-1), \
+                             train_edge.edge_label_index[:, (1 - train_edge.edge_label).nonzero()].squeeze(-1)
+        #emb_out = model(botData.x, pos_edge)  # semi-supervised GCN
+        emb_out = model(all_node_id)    # shallow model
+        loss = recon_loss(emb_out, pos_edge, neg_edge)
+        loss.backward()
+        optimizer.step()
+
+        if epoch % 10 == 0:
+            model.eval()
+            model.training = False
+            #embH, embB = model(botData.x, edgeH_pos), model(botData.x, edgeB_pos)   # semi-supervised GCN
+            embH, embB = model(all_node_id), model(all_node_id)  # shallow model
+
+            num_Hedge, num_Bedge = len(edgeH_pos[0]), len(edgeB_pos[0])
+            y_posH = embH.new_ones(edgeH_pos.size(1))
+            y_posB = embB.new_ones(edgeB_pos.size(1))
+
+            neg_edge_test = test_edge.edge_label_index[:, (1 - test_edge.edge_label).nonzero()].squeeze(-1)
+            edgeH_neg, edgeB_neg = neg_edge_test[:,:num_Hedge], neg_edge_test[:,:num_Bedge]
+
+
+            y_negH, y_negB = edgeH_neg.new_zeros(edgeH_neg.size(1)), edgeB_neg.new_zeros(edgeB_neg.size(1))
+
+            yH, yB = torch.cat([y_posH, y_negH], dim=0), torch.cat([y_posB, y_negB], dim=0)
+
+            decoder = InnerProductDecoder()
+            pred_posH, pred_posB = decoder(embH, edgeH_pos, sigmoid=True), decoder(embB, edgeB_pos, sigmoid=True)
+            neg_predH, neg_predB = decoder(embH, edgeH_neg, sigmoid=True), decoder(embB, edgeB_neg, sigmoid=True)
+
+            print("Epoch: ", epoch, " Test data: ", data)
+            print("Average Human/Bot link: {:.4f} {:.4f}".format(np.mean(pred_posH.detach().numpy()), np.mean(pred_posB.detach().numpy())))
+
+            predH, predB = torch.cat([pred_posH, neg_predH], dim=0).detach().cpu().numpy(), \
+                                   torch.cat([pred_posB, neg_predB], dim=0).detach().cpu().numpy()
+            print("Human: {:.4f} {:.4f}".format(roc_auc_score(yH, predH), average_precision_score(yH, predH)))
+            print("Bot: {:.4f} {:.4f}".format(roc_auc_score(yB, predB), average_precision_score(yB, predB)))
+            print("-------------------------")
+
+
+
+
+def train_InfEgoGraph():
+    # pos, neg中都含有所有edge，只是influencer和treat/control的label不同
+    edge_index = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_edge.npy')    # (num_edge, 2)
+    bot_label = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_bot_label.npy')
+    outcome = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_y.npy') # 在算了Opinion之后才有这个Outcome作为Label
     prop_label = np.load('Dataset/twi22/'+data[:2]+'/'+data+'_prop_label.npy')
 
     botData = Data(x=torch.FloatTensor(outcome).unsqueeze(-1), edge_index=torch.LongTensor(edge_index).t().contiguous())
@@ -164,5 +251,8 @@ def train():
 
 
 if __name__ == "__main__":
-    data = 't1_pos'
-    train()
+    seed = 102
+    data = 't3_pos'
+    set_seed(seed)
+    #train_InfEgoGraph()
+    train_FullGraph()
